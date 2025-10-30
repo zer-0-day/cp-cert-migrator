@@ -1,0 +1,123 @@
+name: Publish to PowerShell Gallery
+run-name: "Release: ${{ github.ref_name || github.run_id }}"
+
+on:
+  push:
+    tags: ['v*.*.*']     # напр., v1.1.0
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+       
+      - name: Debug PWD and list files
+        shell: pwsh
+        run: |
+          Write-Host "PWD:" (Get-Location)
+          Get-ChildItem -Force | Select Name,Length,Mode
+       
+      # === СТАБИЛЬНО обновляем ModuleVersion в .psd1 через PowerShellGet v2.2.5 ===
+      - name: Install and import PowerShellGet v2.2.5
+        shell: pwsh
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module PowerShellGet -RequiredVersion 2.2.5 -Scope CurrentUser -Force -Verbose
+          Import-Module  PowerShellGet -Force
+          Get-Module PowerShellGet -ListAvailable | Select Name,Version | Format-Table -Auto
+       
+      - name: Derive version from git tag and update ModuleVersion
+        shell: pwsh
+        env:
+          GIT_TAG: ${{ github.ref_name }}   # vX.Y.Z
+        run: |
+          try {
+            $version = $env:GIT_TAG -replace '^v',''
+            if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Git tag '$($env:GIT_TAG)' must look like v1.2.3" }
+            $psd1 = Join-Path $PWD 'CPCertMigrator.psd1'
+            if (-not (Test-Path $psd1)) { throw "Manifest not found: $psd1 (PWD: $PWD)" }
+            Update-ModuleManifest -Path $psd1 -ModuleVersion $version -ErrorAction Stop
+            Write-Host "ModuleVersion set to $version"
+            # Печать ключевых полей манифеста
+            $m = Test-ModuleManifest -Path $psd1 -ErrorAction Stop
+            $m | Select Path,Name,Version,Author,Description | Format-List | Out-String | Write-Host
+          } catch { $_ | Format-List * -Force | Out-String | Write-Host; throw }
+       
+      # === Стаджим «чистую» папку dist (без .git/.github и т.п.) ===
+      - name: Stage clean folder (dist) for publish
+        shell: pwsh
+        run: |
+          Remove-Item -Recurse -Force dist,out -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path dist,out | Out-Null
+           
+          # 1) Ключевые файлы
+          robocopy . dist CPCertMigrator.psd1 CPCertMigrator.psm1 README.md LICENSE /NFL /NDL
+          $code = $LASTEXITCODE
+          if ($code -ge 8) { throw "robocopy(1) failed with exit code $code" }
+           
+          # 2) Рекурсивно каталоги, исключая служебные и мусор
+          robocopy . dist /MIR /S /XD .git .github dist .vscode test tests Test Tests /XF CPCertMigrator.nuspec PSGetModuleInfo.xml .gitignore .gitattributes .DS_Store Example.ps1
+          $code = $LASTEXITCODE
+          if ($code -ge 8) { throw "robocopy(2) failed with exit code $code" }
+           
+          # robocopy 0–7 = success, но это не ноль → сбросим, чтобы шаг не упал
+          $global:LASTEXITCODE = 0
+           
+          Write-Host "Staged content:"
+          Get-ChildItem -Recurse dist | Select FullName
+       
+      # === PSResourceGet для поиска/упаковки/публикации ===
+      - name: Install PSResourceGet
+        shell: pwsh
+        run: |
+          Install-Module Microsoft.PowerShell.PSResourceGet -Scope CurrentUser -Force -Verbose
+          Import-Module  Microsoft.PowerShell.PSResourceGet -Force
+          Get-PSResourceRepository | Format-Table Name,Uri,Trusted
+          if (-not (Get-PSResourceRepository | Where-Object Name -eq 'PSGallery')) {
+            Register-PSResourceRepository -Name PSGallery -Uri 'https://www.powershellgallery.com/api/v2' -Trusted
+          }
+       
+      # === Pre-check: такой версии ещё нет в PSGallery ===
+      - name: Pre-check version in PSGallery
+        shell: pwsh
+        env:
+          GIT_TAG: ${{ github.ref_name }}
+        run: |
+          $version = $env:GIT_TAG -replace '^v',''
+          $existing = Find-PSResource -Name 'CPCertMigrator' -Version $version -Repository PSGallery -ErrorAction SilentlyContinue
+          if ($existing) { throw "Version $version already exists in PowerShell Gallery. Bump version and push a NEW tag." }
+       
+      # === УПАКОВКА (dry-run перед публикацией) ===
+      - name: Pack to nupkg (Compress-PSResource)
+        shell: pwsh
+        run: |
+          Compress-PSResource -Path dist -DestinationPath out -ErrorAction Stop
+          Write-Host "Packed artifacts:"; Get-ChildItem out | Select Name,Length
+       
+      - name: Upload nupkg (diagnostics)
+        uses: actions/upload-artifact@v4
+        with:
+          name: nupkg-out
+          path: out/*.nupkg
+       
+      # === ПУБЛИКАЦИЯ готового .nupkg ===
+      - name: Publish to PSGallery
+        shell: pwsh
+        env:
+          PSGALLERY_API_KEY: ${{ secrets.PSGALLERY_API_KEY }}
+        run: |
+          try {
+            if (-not $env:PSGALLERY_API_KEY) { throw "Missing PSGALLERY_API_KEY secret" }
+            Import-Module Microsoft.PowerShell.PSResourceGet -Force
+            if (-not (Get-PSResourceRepository | Where-Object Name -eq 'PSGallery')) {
+              Register-PSResourceRepository -Name PSGallery -Uri 'https://www.powershellgallery.com/api/v2' -Trusted
+            }
+            $pkg = Get-ChildItem out -Filter *.nupkg | Select-Object -First 1
+            if (-not $pkg) { throw "No .nupkg found in 'out' folder" }
+            Write-Host "Publishing: $($pkg.FullName)"
+            Publish-PSResource -NupkgPath $pkg.FullName -Repository PSGallery -ApiKey $env:PSGALLERY_API_KEY -Verbose -ErrorAction Stop
+            Write-Host "Publish completed."
+          } catch { Write-Host "PUBLISH ERROR:" -ForegroundColor Red; $_ | Format-List * -Force | Out-String | Write-Host; throw }
