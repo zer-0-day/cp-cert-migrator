@@ -1,6 +1,7 @@
 # CPCertMigrator
 
 PowerShell модуль для миграции сертификатов CryptoPro CSP между пользовательскими и машинными хранилищами.
+Пока что предварительная версия.
 
 ## Описание
 
@@ -32,11 +33,6 @@ PowerShell модуль для миграции сертификатов CryptoP
 Install-Module -Name CPCertMigrator -Scope CurrentUser
 Import-Module CPCertMigrator
 
-# Или клонировать из GitHub
-git clone https://github.com/YourUsername/CPCertMigrator.git
-Import-Module .\CPCertMigrator\CPCertMigrator.psd1
-```
-
 ## Использование
 
 ```powershell
@@ -44,7 +40,7 @@ Import-Module .\CPCertMigrator\CPCertMigrator.psd1
 Start-CryptoProCertMigrator
 ```
 
-### Консольные команды
+### Команды в Powershell
 
 ```powershell
 # Просмотр сертификатов
@@ -57,7 +53,7 @@ Export-CryptoProCertificates -Scope CurrentUser -ExportFolder "C:\Backup" -Passw
 Import-CryptoProCertificates -Scope CurrentUser -ImportFolder "C:\Backup" -Password "MyPass"
 ```
 
-## Функции
+## Функции модуля
 
 - `Get-CryptoProCertificates` - просмотр сертификатов
 - `Export-CryptoProCertificates` - экспорт в PFX файлы
@@ -82,13 +78,6 @@ Export-CryptoProCertificates -Scope CurrentUser -ExportFolder "C:\Backup" -Passw
 - CryptoPro CSP
 - Права администратора (для LocalMachine)
 
-## Лицензия
-
-MIT
-
-## Разработка
-
-Для разработчиков см. [PUBLISH.md](PUBLISH.md) - инструкция по публикации в PowerShell Gallery.
 
 ## Автор
 
