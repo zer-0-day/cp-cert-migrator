@@ -48,7 +48,63 @@ function Get-SmartFileName {
 }
 
 function Export-CryptoProCertificates {
-    [CmdletBinding()]
+    <#
+    .SYNOPSIS
+    Экспортирует сертификаты CryptoPro CSP в PFX файлы.
+
+    .DESCRIPTION
+    Функция экспортирует сертификаты из указанного хранилища (CurrentUser или LocalMachine) 
+    в защищенные паролем PFX файлы. Поддерживает фильтрацию по различным критериям и 
+    создает подробные логи операций.
+
+    .PARAMETER Scope
+    Область хранилища сертификатов: CurrentUser или LocalMachine.
+    Для LocalMachine требуются права администратора.
+
+    .PARAMETER ExportFolder
+    Путь к папке для сохранения экспортированных PFX файлов.
+    Папка будет создана автоматически, если не существует.
+
+    .PARAMETER Password
+    Пароль для защиты экспортируемых PFX файлов.
+
+    .PARAMETER MinDaysRemaining
+    Минимальное количество дней до истечения сертификата.
+    По умолчанию 0 (экспортируются все сертификаты).
+
+    .PARAMETER SubjectFilter
+    Фильтр по полю Subject сертификата (поддерживает wildcards).
+
+    .PARAMETER IssuerFilter
+    Фильтр по полю Issuer сертификата (поддерживает wildcards).
+
+    .PARAMETER WhatIf
+    Режим предварительного просмотра без выполнения операций.
+
+    .PARAMETER ShowProgress
+    Показывать индикатор прогресса выполнения.
+
+    .EXAMPLE
+    Export-CryptoProCertificates -Scope CurrentUser -ExportFolder "C:\CertBackup" -Password "MySecurePassword"
+    
+    Экспортирует все сертификаты из пользовательского хранилища.
+
+    .EXAMPLE
+    Export-CryptoProCertificates -Scope CurrentUser -ExportFolder "C:\Backup" -Password "Pass123" -SubjectFilter "MyOrg" -MinDaysRemaining 30 -ShowProgress
+    
+    Экспортирует сертификаты организации MyOrg, действующие более 30 дней, с индикатором прогресса.
+
+    .EXAMPLE
+    Export-CryptoProCertificates -Scope LocalMachine -ExportFolder "C:\Backup" -Password "Pass123" -WhatIf
+    
+    Предварительный просмотр экспорта из машинного хранилища без выполнения операций.
+
+    .NOTES
+    Требует установленный CryptoPro CSP.
+    Для работы с LocalMachine необходимы права администратора.
+    Создает лог файл ExportPfxLog.csv в папке экспорта.
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
     param (
         [Parameter(Mandatory = $true)]
         [ValidateSet("LocalMachine", "CurrentUser")]
@@ -76,31 +132,87 @@ function Export-CryptoProCertificates {
         [switch] $ShowProgress
     )
 
-    # Check admin rights for LocalMachine scope
-    if ($Scope -eq "LocalMachine" -and -not (Test-AdminRights)) {
-        throw "Administrator privileges required for LocalMachine scope operations"
+    Write-Verbose "Starting certificate export operation"
+    Write-Verbose "Scope: $Scope, ExportFolder: $ExportFolder, MinDaysRemaining: $MinDaysRemaining"
+    
+    # Validate parameters
+    if ([string]::IsNullOrWhiteSpace($Password)) {
+        throw "Password cannot be empty or whitespace"
+    }
+    
+    if ($Password.Length -lt 4) {
+        Write-Warning "Password is very short. Consider using a stronger password."
     }
 
-    $storePath = "Cert:\$Scope\My"
+    # Check admin rights for LocalMachine scope
+    if ($Scope -eq "LocalMachine" -and -not (Test-AdminRights)) {
+        $errorMsg = "Administrator privileges required for LocalMachine scope operations. Please run PowerShell as Administrator."
+        Write-Error $errorMsg -Category PermissionDenied -ErrorAction Stop
+    }
 
-    if (-not (Test-Path $ExportFolder) -and -not $WhatIf) {
-        New-Item -ItemType Directory -Path $ExportFolder | Out-Null
+    # Validate certificate store path
+    $storePath = "Cert:\$Scope\My"
+    Write-Verbose "Certificate store path: $storePath"
+    
+    if (-not (Test-Path $storePath)) {
+        $errorMsg = "Certificate store path '$storePath' not found. Please ensure CryptoPro CSP is installed."
+        Write-Error $errorMsg -Category ObjectNotFound -ErrorAction Stop
+    }
+
+    # Create export folder if needed
+    if (-not $WhatIf) {
+        if (-not (Test-Path $ExportFolder)) {
+            try {
+                Write-Verbose "Creating export folder: $ExportFolder"
+                New-Item -ItemType Directory -Path $ExportFolder -Force | Out-Null
+                Write-Verbose "Export folder created successfully"
+            }
+            catch {
+                $errorMsg = "Failed to create export folder '$ExportFolder': $($_.Exception.Message)"
+                Write-Error $errorMsg -Category WriteError -ErrorAction Stop
+            }
+        }
+        else {
+            Write-Verbose "Export folder already exists: $ExportFolder"
+        }
     }
 
     # Get certificates with filters
-    $certificates = Get-ChildItem -Path $storePath |
-    Where-Object { $_.NotAfter -gt (Get-Date).AddDays($MinDaysRemaining) }
-
-    if ($SubjectFilter) {
-        $certificates = $certificates | Where-Object { $_.Subject -like "*$SubjectFilter*" }
+    Write-Verbose "Retrieving certificates from store..."
+    try {
+        $allCertificates = Get-ChildItem -Path $storePath -ErrorAction Stop
+        Write-Verbose "Found $($allCertificates.Count) total certificates in store"
+    }
+    catch {
+        $errorMsg = "Failed to access certificate store '$storePath': $($_.Exception.Message)"
+        Write-Error $errorMsg -Category ReadError -ErrorAction Stop
     }
 
+    # Apply date filter
+    $certificates = $allCertificates | Where-Object { $_.NotAfter -gt (Get-Date).AddDays($MinDaysRemaining) }
+    Write-Verbose "After date filter (>$MinDaysRemaining days): $($certificates.Count) certificates"
+
+    # Apply subject filter
+    if ($SubjectFilter) {
+        $beforeCount = $certificates.Count
+        $certificates = $certificates | Where-Object { $_.Subject -like "*$SubjectFilter*" }
+        Write-Verbose "After Subject filter '$SubjectFilter': $($certificates.Count) certificates (filtered out: $($beforeCount - $certificates.Count))"
+    }
+
+    # Apply issuer filter
     if ($IssuerFilter) {
+        $beforeCount = $certificates.Count
         $certificates = $certificates | Where-Object { $_.Issuer -like "*$IssuerFilter*" }
+        Write-Verbose "After Issuer filter '$IssuerFilter': $($certificates.Count) certificates (filtered out: $($beforeCount - $certificates.Count))"
     }
 
     $totalCerts = $certificates.Count
-    Write-Host "Found $totalCerts certificates to export"
+    Write-Host "Found $totalCerts certificates to export" -ForegroundColor Green
+    
+    if ($totalCerts -eq 0) {
+        Write-Warning "No certificates match the specified criteria. Export operation cancelled."
+        return
+    }
 
     if ($WhatIf) {
         Write-Host "WhatIf: Would export the following certificates:"
@@ -115,11 +227,18 @@ function Export-CryptoProCertificates {
         return
     }
 
+    # Prepare for export
+    Write-Verbose "Converting password to secure string..."
     $pwdSecure = ConvertTo-SecureString -String $Password -AsPlainText -Force
+    
     $logFile = Join-Path -Path $ExportFolder -ChildPath "ExportPfxLog.csv"
+    Write-Verbose "Creating log file: $logFile"
     "DateTime,Scope,ContainerName,Thumbprint,Subject,FilePath,Status,Detail" | Out-File -FilePath $logFile -Encoding UTF8
 
     $counter = 0
+    $successCount = 0
+    $errorCount = 0
+    Write-Verbose "Starting export of $totalCerts certificates..."
     $certificates | ForEach-Object {
         $cert = $_
         $counter++
@@ -140,15 +259,37 @@ function Export-CryptoProCertificates {
         }
 
         try {
-            $cert | Export-PfxCertificate -FilePath $filePath -Password $pwdSecure -Force
+            Write-Verbose "Exporting certificate to: $filePath"
+            $cert | Export-PfxCertificate -FilePath $filePath -Password $pwdSecure -Force -ErrorAction Stop
+            
+            # Verify export success
+            if (Test-Path $filePath) {
+                $fileSize = (Get-Item $filePath).Length
+                Write-Verbose "Export successful. File size: $fileSize bytes"
+                $successCount++
+            } else {
+                throw "PFX file was not created"
+            }
+            
             $line = ("{0},{1},{2},{3},{4},{5},Success," -f (Get-Date -Format s), $Scope, $smartName, $thumb, $cert.Subject, $filePath)
-            $line | Out-File -FilePath $logFile -Append -Encoding UTF8
+            $line | Out-File -FilePath $logFile -Append -Encoding UTF8 -ErrorAction SilentlyContinue
         }
         catch {
+            $errorCount++
             $detail = $_.Exception.Message.Replace(",", ";")
             $line = ("{0},{1},{2},{3},{4},{5},Failed,{6}" -f (Get-Date -Format s), $Scope, $smartName, $thumb, $cert.Subject, $filePath, $detail)
-            $line | Out-File -FilePath $logFile -Append -Encoding UTF8
-            Write-Warning "Failed to export $smartName : $($_.Exception.Message)"
+            $line | Out-File -FilePath $logFile -Append -Encoding UTF8 -ErrorAction SilentlyContinue
+            
+            Write-Warning "Failed to export certificate '$smartName'"
+            Write-Verbose "Export error details: $($_.Exception.Message)"
+            
+            # Additional error context
+            if ($_.Exception.Message -like "*access*denied*") {
+                Write-Verbose "Possible cause: Insufficient permissions or certificate is not exportable"
+            }
+            elseif ($_.Exception.Message -like "*password*") {
+                Write-Verbose "Possible cause: Password complexity requirements not met"
+            }
         }
     }
 
@@ -156,11 +297,71 @@ function Export-CryptoProCertificates {
         Write-Progress -Activity "Exporting Certificates" -Completed
     }
 
-    Write-Host "Export completed. Exported $counter certificates. Log: $logFile"
+    # Final summary
+    Write-Verbose "Export operation completed"
+    Write-Verbose "Total processed: $counter certificates"
+    Write-Verbose "Successful exports: $successCount"
+    Write-Verbose "Failed exports: $errorCount"
+    Write-Verbose "Log file: $logFile"
+    
+    if ($errorCount -eq 0) {
+        Write-Host "✅ Export completed successfully! Exported $successCount certificates." -ForegroundColor Green
+    } else {
+        Write-Host "⚠️  Export completed with issues. Success: $successCount, Failed: $errorCount" -ForegroundColor Yellow
+    }
+    
+    Write-Host "📄 Log file: $logFile" -ForegroundColor Gray
 }
 
 function Import-CryptoProCertificates {
-    [CmdletBinding()]
+    <#
+    .SYNOPSIS
+    Импортирует сертификаты CryptoPro CSP из PFX файлов.
+
+    .DESCRIPTION
+    Функция импортирует сертификаты из PFX файлов в указанное хранилище (CurrentUser или LocalMachine).
+    Поддерживает валидацию файлов, проверку дубликатов и создает подробные логи операций.
+
+    .PARAMETER Scope
+    Область хранилища сертификатов: CurrentUser или LocalMachine.
+    Для LocalMachine требуются права администратора.
+
+    .PARAMETER ImportFolder
+    Путь к папке с PFX файлами для импорта.
+
+    .PARAMETER Password
+    Пароль для расшифровки PFX файлов.
+
+    .PARAMETER WhatIf
+    Режим предварительного просмотра без выполнения операций.
+
+    .PARAMETER ShowProgress
+    Показывать индикатор прогресса выполнения.
+
+    .PARAMETER SkipExisting
+    Пропускать сертификаты, которые уже существуют в хранилище.
+
+    .EXAMPLE
+    Import-CryptoProCertificates -Scope CurrentUser -ImportFolder "C:\CertBackup" -Password "MySecurePassword"
+    
+    Импортирует все PFX файлы из папки в пользовательское хранилище.
+
+    .EXAMPLE
+    Import-CryptoProCertificates -Scope LocalMachine -ImportFolder "C:\Backup" -Password "Pass123" -SkipExisting -ShowProgress
+    
+    Импортирует сертификаты в машинное хранилище, пропуская существующие, с индикатором прогресса.
+
+    .EXAMPLE
+    Import-CryptoProCertificates -Scope CurrentUser -ImportFolder "C:\Backup" -Password "Pass123" -WhatIf
+    
+    Предварительный просмотр импорта без выполнения операций.
+
+    .NOTES
+    Требует установленный CryptoPro CSP.
+    Для работы с LocalMachine необходимы права администратора.
+    Создает лог файл ImportPfxLog.csv в папке импорта.
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
     param (
         [Parameter(Mandatory = $true)]
         [ValidateSet("LocalMachine", "CurrentUser")]
@@ -284,8 +485,50 @@ function Import-CryptoProCertificates {
     Write-Host "Import completed. Imported: $imported, Skipped: $skipped. Log: $logFile"
 }
 
-# New function to list certificates with details
 function Get-CryptoProCertificates {
+    <#
+    .SYNOPSIS
+    Получает список сертификатов CryptoPro CSP с детальной информацией.
+
+    .DESCRIPTION
+    Функция возвращает список сертификатов из указанного хранилища с подробной информацией
+    включая Subject, Issuer, сроки действия и статус приватного ключа.
+    Поддерживает фильтрацию по различным критериям.
+
+    .PARAMETER Scope
+    Область хранилища сертификатов: CurrentUser или LocalMachine.
+    Для LocalMachine требуются права администратора.
+
+    .PARAMETER MinDaysRemaining
+    Минимальное количество дней до истечения сертификата.
+    По умолчанию 0 (показываются все сертификаты).
+
+    .PARAMETER SubjectFilter
+    Фильтр по полю Subject сертификата (поддерживает wildcards).
+
+    .PARAMETER IssuerFilter
+    Фильтр по полю Issuer сертификата (поддерживает wildcards).
+
+    .EXAMPLE
+    Get-CryptoProCertificates -Scope CurrentUser
+    
+    Получает все сертификаты из пользовательского хранилища.
+
+    .EXAMPLE
+    Get-CryptoProCertificates -Scope CurrentUser -MinDaysRemaining 30 -SubjectFilter "MyOrg"
+    
+    Получает сертификаты организации MyOrg, действующие более 30 дней.
+
+    .EXAMPLE
+    Get-CryptoProCertificates -Scope LocalMachine -IssuerFilter "MyCA" | Format-Table
+    
+    Получает сертификаты от определенного УЦ из машинного хранилища в табличном виде.
+
+    .NOTES
+    Требует установленный CryptoPro CSP.
+    Для работы с LocalMachine необходимы права администратора.
+    Возвращает объекты с полями: Subject, Issuer, Thumbprint, NotBefore, NotAfter, DaysRemaining, HasPrivateKey, FriendlyName.
+    #>
     [CmdletBinding()]
     param (
         [Parameter(Mandatory = $true)]
@@ -347,8 +590,30 @@ function Get-CryptoProCertificates {
     }
 }
 
-# Interactive menu-driven function
 function Start-CryptoProCertMigrator {
+    <#
+    .SYNOPSIS
+    Запускает интерактивное консольное меню для работы с сертификатами CryptoPro CSP.
+
+    .DESCRIPTION
+    Функция предоставляет удобное интерактивное меню для выполнения основных операций
+    с сертификатами: просмотр, экспорт, импорт и быстрая миграция между хранилищами.
+    Подходит для пользователей, которые предпочитают пошаговый интерфейс.
+
+    .EXAMPLE
+    Start-CryptoProCertMigrator
+    
+    Запускает интерактивное меню с опциями:
+    1. Просмотр сертификатов
+    2. Экспорт сертификатов  
+    3. Импорт сертификатов
+    4. Быстрая миграция CurrentUser -> LocalMachine
+
+    .NOTES
+    Требует установленный CryptoPro CSP.
+    Для операций с LocalMachine необходимы права администратора.
+    Меню работает в цикле до выбора пункта "Выход".
+    #>
     [CmdletBinding()]
     param()
 
