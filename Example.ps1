@@ -29,30 +29,37 @@ Get-CryptoProCertificates -Scope CurrentUser -MinDaysRemaining 30 |
 # ЭКСПОРТ СЕРТИФИКАТОВ
 # ========================================
 
-# Базовый экспорт
-Export-CryptoProCertificates -Scope CurrentUser -ExportFolder "C:\Backup" -Password "MyPass"
+# Базовый экспорт (с защищенным паролем)
+$password = ConvertTo-SecureString "MyPass" -AsPlainText -Force
+Export-CryptoProCertificates -Scope CurrentUser -ExportFolder "C:\Backup" -Password $password
 
 # С фильтрацией и прогрессом
-Export-CryptoProCertificates -Scope CurrentUser -ExportFolder "C:\Backup" -Password "MyPass" -SubjectFilter "Test" -ShowProgress
+$password = Read-Host "Введите пароль" -AsSecureString
+Export-CryptoProCertificates -Scope CurrentUser -ExportFolder "C:\Backup" -Password $password -SubjectFilter "Test" -ShowProgress
 
 # Предварительный просмотр (WhatIf)
-Export-CryptoProCertificates -Scope CurrentUser -ExportFolder "C:\Test" -Password "Pass" -WhatIf
+$password = ConvertTo-SecureString "Pass" -AsPlainText -Force
+Export-CryptoProCertificates -Scope CurrentUser -ExportFolder "C:\Test" -Password $password -WhatIf
 
 # С подробным логированием
-Export-CryptoProCertificates -Scope CurrentUser -ExportFolder "C:\Backup" -Password "Pass" -Verbose
+$password = ConvertTo-SecureString "Pass" -AsPlainText -Force
+Export-CryptoProCertificates -Scope CurrentUser -ExportFolder "C:\Backup" -Password $password -Verbose
 
 # ========================================
 # ИМПОРТ СЕРТИФИКАТОВ
 # ========================================
 
-# Базовый импорт
-Import-CryptoProCertificates -Scope CurrentUser -ImportFolder "C:\Backup" -Password "MyPass"
+# Базовый импорт (с защищенным паролем)
+$password = ConvertTo-SecureString "MyPass" -AsPlainText -Force
+Import-CryptoProCertificates -Scope CurrentUser -ImportFolder "C:\Backup" -Password $password
 
 # С пропуском дубликатов
-Import-CryptoProCertificates -Scope CurrentUser -ImportFolder "C:\Backup" -Password "MyPass" -SkipExisting
+$password = Read-Host "Введите пароль" -AsSecureString
+Import-CryptoProCertificates -Scope CurrentUser -ImportFolder "C:\Backup" -Password $password -SkipExisting
 
 # Предварительный просмотр импорта
-Import-CryptoProCertificates -Scope CurrentUser -ImportFolder "C:\Backup" -Password "Pass" -WhatIf
+$password = ConvertTo-SecureString "Pass" -AsPlainText -Force
+Import-CryptoProCertificates -Scope CurrentUser -ImportFolder "C:\Backup" -Password $password -WhatIf
 
 # ========================================
 # БЫСТРАЯ МИГРАЦИЯ
@@ -63,8 +70,9 @@ Import-CryptoProCertificates -Scope CurrentUser -ImportFolder "C:\Backup" -Passw
 Start-CryptoProCertMigrator
 
 # Или вручную:
-Export-CryptoProCertificates -Scope CurrentUser -ExportFolder "C:\TempMigration" -Password "TempPass"
-Import-CryptoProCertificates -Scope LocalMachine -ImportFolder "C:\TempMigration" -Password "TempPass" -SkipExisting
+$tempPassword = ConvertTo-SecureString "TempPass" -AsPlainText -Force
+Export-CryptoProCertificates -Scope CurrentUser -ExportFolder "C:\TempMigration" -Password $tempPassword
+Import-CryptoProCertificates -Scope LocalMachine -ImportFolder "C:\TempMigration" -Password $tempPassword -SkipExisting
 
 # ========================================
 # ПОЛУЧЕНИЕ СПРАВКИ

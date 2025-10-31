@@ -1,49 +1,54 @@
 # =============================================================================
-# Module: CryptoProCertMigrator
-# File: CPCertMigrator.psm1
-# Purpose: PowerShell module to export and import certificates/containers
-#          for CryptoPro CSP for both LocalMachine and CurrentUser scopes.
-# Version: 1.1.0
-# Author: zeroday
+# Модуль: CryptoProCertMigrator
+# Файл: CPCertMigrator.psm1
+# Назначение: PowerShell модуль для экспорта и импорта сертификатов/контейнеров
+#             CryptoPro CSP для областей LocalMachine и CurrentUser.
+# Автор: zeroday
 # =============================================================================
 
-# Helper function to check administrator privileges
+# Вспомогательная функция для проверки прав администратора
 function Test-AdminRights {
+    # Получаем текущего пользователя и проверяем его роль
     $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = New-Object Security.Principal.WindowsPrincipal($currentUser)
     return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
-# Helper function to validate PFX file
+# Вспомогательная функция для валидации PFX файла
 function Test-PfxFile {
     param(
-        [string]$FilePath,
-        [string]$Password
+        [string]$FilePath,        # Путь к PFX файлу
+        [SecureString]$Password   # Пароль для расшифровки (защищенная строка)
     )
     
     try {
-        $pwdSecure = ConvertTo-SecureString -String $Password -AsPlainText -Force
-        $null = Get-PfxCertificate -FilePath $FilePath -Password $pwdSecure
+        # Пытаемся открыть PFX файл с указанным паролем
+        $null = Get-PfxCertificate -FilePath $FilePath -Password $Password
         return $true
     }
     catch {
+        # Если не удалось открыть - файл поврежден или неверный пароль
         return $false
     }
 }
 
-# Helper function to generate smart file names
+# Вспомогательная функция для генерации умных имен файлов
 function Get-SmartFileName {
     param(
         [System.Security.Cryptography.X509Certificates.X509Certificate2]$Certificate
     )
     
+    # Извлекаем CN из Subject и очищаем от недопустимых символов
     $subject = $Certificate.Subject -replace 'CN=([^,]+).*', '$1' -replace '[\\\/:\*\?\"<>|]', '_'
+    # Берем первые 8 символов серийного номера для уникальности
     $serial = $Certificate.SerialNumber.Substring(0, [Math]::Min(8, $Certificate.SerialNumber.Length))
     
+    # Если Subject пустой, используем только серийный номер
     if ([string]::IsNullOrEmpty($subject)) {
         return "Cert_$serial"
     }
     
+    # Возвращаем комбинацию Subject и серийного номера
     return "${subject}_${serial}"
 }
 
@@ -114,7 +119,7 @@ function Export-CryptoProCertificates {
         [string] $ExportFolder,
 
         [Parameter(Mandatory = $true)]
-        [string] $Password,
+        [SecureString] $Password,
 
         [Parameter()]
         [int] $MinDaysRemaining = 0,
@@ -126,119 +131,120 @@ function Export-CryptoProCertificates {
         [string] $IssuerFilter = "",
 
         [Parameter()]
-        [switch] $WhatIf,
-
-        [Parameter()]
         [switch] $ShowProgress
     )
 
-    Write-Verbose "Starting certificate export operation"
-    Write-Verbose "Scope: $Scope, ExportFolder: $ExportFolder, MinDaysRemaining: $MinDaysRemaining"
+    Write-Verbose "Начинаем операцию экспорта сертификатов"
+    Write-Verbose "Область: $Scope, Папка экспорта: $ExportFolder, Мин. дней до истечения: $MinDaysRemaining"
     
-    # Validate parameters
-    if ([string]::IsNullOrWhiteSpace($Password)) {
-        throw "Password cannot be empty or whitespace"
+    # Проверяем параметры
+    if ($null -eq $Password -or $Password.Length -eq 0) {
+        throw "Пароль не может быть пустым"
     }
     
-    if ($Password.Length -lt 4) {
-        Write-Warning "Password is very short. Consider using a stronger password."
+    # Для SecureString проверяем длину через преобразование
+    $passwordText = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($Password))
+    if ($passwordText.Length -lt 4) {
+        Write-Warning "Пароль очень короткий. Рекомендуется использовать более надежный пароль."
     }
+    # Очищаем временную переменную с паролем
+    $passwordText = $null
 
-    # Check admin rights for LocalMachine scope
+    # Проверяем права администратора для области LocalMachine
     if ($Scope -eq "LocalMachine" -and -not (Test-AdminRights)) {
-        $errorMsg = "Administrator privileges required for LocalMachine scope operations. Please run PowerShell as Administrator."
+        $errorMsg = "Для работы с областью LocalMachine требуются права администратора. Запустите PowerShell от имени администратора."
         Write-Error $errorMsg -Category PermissionDenied -ErrorAction Stop
     }
 
-    # Validate certificate store path
+    # Проверяем путь к хранилищу сертификатов
     $storePath = "Cert:\$Scope\My"
-    Write-Verbose "Certificate store path: $storePath"
+    Write-Verbose "Путь к хранилищу сертификатов: $storePath"
     
     if (-not (Test-Path $storePath)) {
-        $errorMsg = "Certificate store path '$storePath' not found. Please ensure CryptoPro CSP is installed."
+        $errorMsg = "Путь к хранилищу сертификатов '$storePath' не найден. Убедитесь, что CryptoPro CSP установлен."
         Write-Error $errorMsg -Category ObjectNotFound -ErrorAction Stop
     }
 
-    # Create export folder if needed
-    if (-not $WhatIf) {
+    # Создаем папку для экспорта при необходимости
+    if (-not $WhatIfPreference) {
         if (-not (Test-Path $ExportFolder)) {
             try {
-                Write-Verbose "Creating export folder: $ExportFolder"
+                Write-Verbose "Создаем папку для экспорта: $ExportFolder"
                 New-Item -ItemType Directory -Path $ExportFolder -Force | Out-Null
-                Write-Verbose "Export folder created successfully"
+                Write-Verbose "Папка для экспорта успешно создана"
             }
             catch {
-                $errorMsg = "Failed to create export folder '$ExportFolder': $($_.Exception.Message)"
+                $errorMsg = "Не удалось создать папку для экспорта '$ExportFolder': $($_.Exception.Message)"
                 Write-Error $errorMsg -Category WriteError -ErrorAction Stop
             }
         }
         else {
-            Write-Verbose "Export folder already exists: $ExportFolder"
+            Write-Verbose "Папка для экспорта уже существует: $ExportFolder"
         }
     }
 
-    # Get certificates with filters
-    Write-Verbose "Retrieving certificates from store..."
+    # Получаем сертификаты с применением фильтров
+    Write-Verbose "Получаем сертификаты из хранилища..."
     try {
         $allCertificates = Get-ChildItem -Path $storePath -ErrorAction Stop
-        Write-Verbose "Found $($allCertificates.Count) total certificates in store"
+        Write-Verbose "Найдено $($allCertificates.Count) сертификатов в хранилище"
     }
     catch {
-        $errorMsg = "Failed to access certificate store '$storePath': $($_.Exception.Message)"
+        $errorMsg = "Не удалось получить доступ к хранилищу сертификатов '$storePath': $($_.Exception.Message)"
         Write-Error $errorMsg -Category ReadError -ErrorAction Stop
     }
 
-    # Apply date filter
+    # Применяем фильтр по дате
     $certificates = $allCertificates | Where-Object { $_.NotAfter -gt (Get-Date).AddDays($MinDaysRemaining) }
-    Write-Verbose "After date filter (>$MinDaysRemaining days): $($certificates.Count) certificates"
+    Write-Verbose "После фильтра по дате (>$MinDaysRemaining дней): $($certificates.Count) сертификатов"
 
-    # Apply subject filter
+    # Применяем фильтр по Subject
     if ($SubjectFilter) {
         $beforeCount = $certificates.Count
         $certificates = $certificates | Where-Object { $_.Subject -like "*$SubjectFilter*" }
-        Write-Verbose "After Subject filter '$SubjectFilter': $($certificates.Count) certificates (filtered out: $($beforeCount - $certificates.Count))"
+        Write-Verbose "После фильтра по Subject '$SubjectFilter': $($certificates.Count) сертификатов (отфильтровано: $($beforeCount - $certificates.Count))"
     }
 
-    # Apply issuer filter
+    # Применяем фильтр по Issuer
     if ($IssuerFilter) {
         $beforeCount = $certificates.Count
         $certificates = $certificates | Where-Object { $_.Issuer -like "*$IssuerFilter*" }
-        Write-Verbose "After Issuer filter '$IssuerFilter': $($certificates.Count) certificates (filtered out: $($beforeCount - $certificates.Count))"
+        Write-Verbose "После фильтра по Issuer '$IssuerFilter': $($certificates.Count) сертификатов (отфильтровано: $($beforeCount - $certificates.Count))"
     }
 
     $totalCerts = $certificates.Count
-    Write-Host "Found $totalCerts certificates to export" -ForegroundColor Green
+    Write-Host "Найдено $totalCerts сертификатов для экспорта" -ForegroundColor Green
     
     if ($totalCerts -eq 0) {
-        Write-Warning "No certificates match the specified criteria. Export operation cancelled."
+        Write-Warning "Ни один сертификат не соответствует указанным критериям. Операция экспорта отменена."
         return
     }
 
-    if ($WhatIf) {
-        Write-Host "WhatIf: Would export the following certificates:"
+    if ($WhatIfPreference) {
+        Write-Host "Предварительный просмотр: будут экспортированы следующие сертификаты:"
         $certificates | ForEach-Object {
             $smartName = Get-SmartFileName -Certificate $_
-            Write-Host "  - Subject: $($_.Subject)"
-            Write-Host "    Thumbprint: $($_.Thumbprint)"
-            Write-Host "    File: $smartName.pfx"
-            Write-Host "    Expires: $($_.NotAfter)"
+            Write-Host "  - Субъект: $($_.Subject)"
+            Write-Host "    Отпечаток: $($_.Thumbprint)"
+            Write-Host "    Файл: $smartName.pfx"
+            Write-Host "    Истекает: $($_.NotAfter)"
             Write-Host ""
         }
         return
     }
 
-    # Prepare for export
-    Write-Verbose "Converting password to secure string..."
-    $pwdSecure = ConvertTo-SecureString -String $Password -AsPlainText -Force
+    # Подготавливаемся к экспорту
+    Write-Verbose "Используем защищенный пароль..."
+    $pwdSecure = $Password
     
     $logFile = Join-Path -Path $ExportFolder -ChildPath "ExportPfxLog.csv"
-    Write-Verbose "Creating log file: $logFile"
-    "DateTime,Scope,ContainerName,Thumbprint,Subject,FilePath,Status,Detail" | Out-File -FilePath $logFile -Encoding UTF8
+    Write-Verbose "Создаем файл журнала: $logFile"
+    "Дата_Время,Область,Имя_Контейнера,Отпечаток,Субъект,Путь_Файла,Статус,Детали" | Out-File -FilePath $logFile -Encoding UTF8
 
     $counter = 0
     $successCount = 0
     $errorCount = 0
-    Write-Verbose "Starting export of $totalCerts certificates..."
+    Write-Verbose "Начинаем экспорт $totalCerts сертификатов..."
     $certificates | ForEach-Object {
         $cert = $_
         $counter++
@@ -248,69 +254,71 @@ function Export-CryptoProCertificates {
 
         if ($ShowProgress) {
             $percentComplete = [math]::Round(($counter / $totalCerts) * 100)
-            Write-Progress -Activity "Exporting Certificates" -Status "Processing $smartName" -PercentComplete $percentComplete
+            Write-Progress -Activity "Экспорт сертификатов" -Status "Обрабатываем $smartName" -PercentComplete $percentComplete
         }
 
-        Write-Verbose "Exporting: Scope=$Scope, Cert=$smartName, Thumbprint=$thumb, File=$filePath"
+        Write-Verbose "Экспортируем: Область=$Scope, Сертификат=$smartName, Отпечаток=$thumb, Файл=$filePath"
 
-        # Check if file already exists
+        # Проверяем, существует ли файл с таким именем
         if (Test-Path $filePath) {
             $filePath = Join-Path -Path $ExportFolder -ChildPath ("{0}_{1}.pfx" -f $smartName, $thumb.Substring(0, 8))
         }
 
         try {
-            Write-Verbose "Exporting certificate to: $filePath"
+            Write-Verbose "Экспортируем сертификат в: $filePath"
             $cert | Export-PfxCertificate -FilePath $filePath -Password $pwdSecure -Force -ErrorAction Stop
             
-            # Verify export success
+            # Проверяем успешность экспорта
             if (Test-Path $filePath) {
                 $fileSize = (Get-Item $filePath).Length
-                Write-Verbose "Export successful. File size: $fileSize bytes"
+                Write-Verbose "Экспорт успешен. Размер файла: $fileSize байт"
                 $successCount++
-            } else {
-                throw "PFX file was not created"
+            }
+            else {
+                throw "PFX файл не был создан"
             }
             
-            $line = ("{0},{1},{2},{3},{4},{5},Success," -f (Get-Date -Format s), $Scope, $smartName, $thumb, $cert.Subject, $filePath)
+            $line = ("{0},{1},{2},{3},{4},{5},Успешно," -f (Get-Date -Format s), $Scope, $smartName, $thumb, $cert.Subject, $filePath)
             $line | Out-File -FilePath $logFile -Append -Encoding UTF8 -ErrorAction SilentlyContinue
         }
         catch {
             $errorCount++
             $detail = $_.Exception.Message.Replace(",", ";")
-            $line = ("{0},{1},{2},{3},{4},{5},Failed,{6}" -f (Get-Date -Format s), $Scope, $smartName, $thumb, $cert.Subject, $filePath, $detail)
+            $line = ("{0},{1},{2},{3},{4},{5},Ошибка,{6}" -f (Get-Date -Format s), $Scope, $smartName, $thumb, $cert.Subject, $filePath, $detail)
             $line | Out-File -FilePath $logFile -Append -Encoding UTF8 -ErrorAction SilentlyContinue
             
-            Write-Warning "Failed to export certificate '$smartName'"
-            Write-Verbose "Export error details: $($_.Exception.Message)"
+            Write-Warning "Не удалось экспортировать сертификат '$smartName'"
+            Write-Verbose "Детали ошибки экспорта: $($_.Exception.Message)"
             
-            # Additional error context
-            if ($_.Exception.Message -like "*access*denied*") {
-                Write-Verbose "Possible cause: Insufficient permissions or certificate is not exportable"
+            # Дополнительный контекст ошибки
+            if ($_.Exception.Message -like "*access*denied*" -or $_.Exception.Message -like "*доступ*запрещен*") {
+                Write-Verbose "Возможная причина: Недостаточно прав или сертификат не экспортируемый"
             }
-            elseif ($_.Exception.Message -like "*password*") {
-                Write-Verbose "Possible cause: Password complexity requirements not met"
+            elseif ($_.Exception.Message -like "*password*" -or $_.Exception.Message -like "*пароль*") {
+                Write-Verbose "Возможная причина: Не соблюдены требования к сложности пароля"
             }
         }
     }
 
     if ($ShowProgress) {
-        Write-Progress -Activity "Exporting Certificates" -Completed
+        Write-Progress -Activity "Экспорт сертификатов" -Completed
     }
 
-    # Final summary
-    Write-Verbose "Export operation completed"
-    Write-Verbose "Total processed: $counter certificates"
-    Write-Verbose "Successful exports: $successCount"
-    Write-Verbose "Failed exports: $errorCount"
-    Write-Verbose "Log file: $logFile"
+    # Итоговая сводка
+    Write-Verbose "Операция экспорта завершена"
+    Write-Verbose "Всего обработано: $counter сертификатов"
+    Write-Verbose "Успешных экспортов: $successCount"
+    Write-Verbose "Неудачных экспортов: $errorCount"
+    Write-Verbose "Файл журнала: $logFile"
     
     if ($errorCount -eq 0) {
-        Write-Host "✅ Export completed successfully! Exported $successCount certificates." -ForegroundColor Green
-    } else {
-        Write-Host "⚠️  Export completed with issues. Success: $successCount, Failed: $errorCount" -ForegroundColor Yellow
+        Write-Host "✅ Экспорт успешно завершен! Экспортировано $successCount сертификатов." -ForegroundColor Green
+    }
+    else {
+        Write-Host "⚠️  Экспорт завершен с проблемами. Успешно: $successCount, Ошибок: $errorCount" -ForegroundColor Yellow
     }
     
-    Write-Host "📄 Log file: $logFile" -ForegroundColor Gray
+    Write-Host "📄 Файл журнала: $logFile" -ForegroundColor Gray
 }
 
 function Import-CryptoProCertificates {
@@ -371,10 +379,7 @@ function Import-CryptoProCertificates {
         [string] $ImportFolder,
 
         [Parameter(Mandatory = $true)]
-        [string] $Password,
-
-        [Parameter()]
-        [switch] $WhatIf,
+        [SecureString] $Password,
 
         [Parameter()]
         [switch] $ShowProgress,
@@ -383,49 +388,49 @@ function Import-CryptoProCertificates {
         [switch] $SkipExisting
     )
 
-    # Check admin rights for LocalMachine scope
+    # Проверяем права администратора для области LocalMachine
     if ($Scope -eq "LocalMachine" -and -not (Test-AdminRights)) {
-        throw "Administrator privileges required for LocalMachine scope operations"
+        throw "Для работы с областью LocalMachine требуются права администратора"
     }
 
     $targetStore = "Cert:\$Scope\My"
     
-    # Get PFX files
+    # Получаем PFX файлы
     $pfxFiles = Get-ChildItem -Path $ImportFolder -Filter *.pfx
     $totalFiles = $pfxFiles.Count
     
-    Write-Host "Found $totalFiles PFX files to import"
+    Write-Host "Найдено $totalFiles PFX файлов для импорта"
 
     if ($totalFiles -eq 0) {
-        Write-Warning "No PFX files found in $ImportFolder"
+        Write-Warning "PFX файлы не найдены в папке $ImportFolder"
         return
     }
 
-    # Validate files first
-    Write-Host "Validating PFX files..."
+    # Сначала проверяем файлы
+    Write-Host "Проверяем PFX файлы..."
     $validFiles = @()
     $pfxFiles | ForEach-Object {
         if (Test-PfxFile -FilePath $_.FullName -Password $Password) {
             $validFiles += $_
         }
         else {
-            Write-Warning "Invalid PFX file or wrong password: $($_.Name)"
+            Write-Warning "Неверный PFX файл или неправильный пароль: $($_.Name)"
         }
     }
 
-    Write-Host "Valid files: $($validFiles.Count) of $totalFiles"
+    Write-Host "Корректных файлов: $($validFiles.Count) из $totalFiles"
 
-    if ($WhatIf) {
-        Write-Host "WhatIf: Would import the following files:"
+    if ($WhatIfPreference) {
+        Write-Host "Предварительный просмотр: будут импортированы следующие файлы:"
         $validFiles | ForEach-Object {
-            Write-Host "  - File: $($_.Name)"
-            Write-Host "    Size: $([math]::Round($_.Length / 1KB, 2)) KB"
+            Write-Host "  - Файл: $($_.Name)"
+            Write-Host "    Размер: $([math]::Round($_.Length / 1KB, 2)) КБ"
             Write-Host ""
         }
         return
     }
 
-    # Get existing certificates for duplicate check
+    # Получаем существующие сертификаты для проверки дубликатов
     $existingCerts = @{}
     if ($SkipExisting) {
         Get-ChildItem -Path $targetStore | ForEach-Object {
@@ -433,9 +438,9 @@ function Import-CryptoProCertificates {
         }
     }
 
-    $pwdSecure = ConvertTo-SecureString -String $Password -AsPlainText -Force
+    $pwdSecure = $Password
     $logFile = Join-Path -Path $ImportFolder -ChildPath "ImportPfxLog.csv"
-    "DateTime,Scope,FileName,Thumbprint,Subject,Status,Detail" | Out-File -FilePath $logFile -Encoding UTF8
+    "Дата_Время,Область,Имя_Файла,Отпечаток,Субъект,Статус,Детали" | Out-File -FilePath $logFile -Encoding UTF8
 
     $counter = 0
     $imported = 0
@@ -448,41 +453,41 @@ function Import-CryptoProCertificates {
 
         if ($ShowProgress) {
             $percentComplete = [math]::Round(($counter / $validFiles.Count) * 100)
-            Write-Progress -Activity "Importing Certificates" -Status "Processing $fileName" -PercentComplete $percentComplete
+            Write-Progress -Activity "Импорт сертификатов" -Status "Обрабатываем $fileName" -PercentComplete $percentComplete
         }
 
-        Write-Verbose "Importing: Scope=$Scope, File=$file"
+        Write-Verbose "Импортируем: Область=$Scope, Файл=$file"
 
         try {
-            # Get certificate info for duplicate check
+            # Получаем информацию о сертификате для проверки дубликатов
             $tempCert = Get-PfxCertificate -FilePath $file -Password $pwdSecure
             
             if ($SkipExisting -and $existingCerts.ContainsKey($tempCert.Thumbprint)) {
-                $line = ("{0},{1},{2},{3},{4},Skipped,Certificate already exists" -f (Get-Date -Format s), $Scope, $fileName, $tempCert.Thumbprint, $tempCert.Subject)
+                $line = ("{0},{1},{2},{3},{4},Пропущен,Сертификат уже существует" -f (Get-Date -Format s), $Scope, $fileName, $tempCert.Thumbprint, $tempCert.Subject)
                 $line | Out-File -FilePath $logFile -Append -Encoding UTF8
                 $skipped++
-                Write-Verbose "Skipped existing certificate: $($tempCert.Subject)"
+                Write-Verbose "Пропущен существующий сертификат: $($tempCert.Subject)"
                 return
             }
 
             Import-PfxCertificate -FilePath $file -CertStoreLocation $targetStore -Password $pwdSecure -Exportable
-            $line = ("{0},{1},{2},{3},{4},Success," -f (Get-Date -Format s), $Scope, $fileName, $tempCert.Thumbprint, $tempCert.Subject)
+            $line = ("{0},{1},{2},{3},{4},Успешно," -f (Get-Date -Format s), $Scope, $fileName, $tempCert.Thumbprint, $tempCert.Subject)
             $line | Out-File -FilePath $logFile -Append -Encoding UTF8
             $imported++
         }
         catch {
             $detail = $_.Exception.Message.Replace(",", ";")
-            $line = ("{0},{1},{2},,Failed,{3}" -f (Get-Date -Format s), $Scope, $fileName, $detail)
+            $line = ("{0},{1},{2},,Ошибка,{3}" -f (Get-Date -Format s), $Scope, $fileName, $detail)
             $line | Out-File -FilePath $logFile -Append -Encoding UTF8
-            Write-Warning "Failed to import $fileName : $($_.Exception.Message)"
+            Write-Warning "Не удалось импортировать $fileName : $($_.Exception.Message)"
         }
     }
 
     if ($ShowProgress) {
-        Write-Progress -Activity "Importing Certificates" -Completed
+        Write-Progress -Activity "Импорт сертификатов" -Completed
     }
 
-    Write-Host "Import completed. Imported: $imported, Skipped: $skipped. Log: $logFile"
+    Write-Host "Импорт завершен. Импортировано: $imported, Пропущено: $skipped. Журнал: $logFile"
 }
 
 function Get-CryptoProCertificates {
@@ -545,47 +550,51 @@ function Get-CryptoProCertificates {
         [string] $IssuerFilter = ""
     )
 
-    # Check admin rights for LocalMachine scope
+    # Проверяем права администратора для области LocalMachine
     if ($Scope -eq "LocalMachine" -and -not (Test-AdminRights)) {
-        throw "Administrator privileges required for LocalMachine scope operations"
+        throw "Для работы с областью LocalMachine требуются права администратора"
     }
 
     $storePath = "Cert:\$Scope\My"
     
+    # Получаем сертификаты с фильтрацией по дате
     $certificates = Get-ChildItem -Path $storePath |
     Where-Object { $_.NotAfter -gt (Get-Date).AddDays($MinDaysRemaining) }
 
+    # Применяем фильтр по Subject если указан
     if ($SubjectFilter) {
         $certificates = $certificates | Where-Object { $_.Subject -like "*$SubjectFilter*" }
     }
 
+    # Применяем фильтр по Issuer если указан
     if ($IssuerFilter) {
         $certificates = $certificates | Where-Object { $_.Issuer -like "*$IssuerFilter*" }
     }
 
+    # Возвращаем сертификаты с русскими названиями полей
     $certificates | Select-Object @{
-        Name       = 'Subject'
+        Name       = 'Субъект'
         Expression = { $_.Subject }
     }, @{
-        Name       = 'Issuer'
+        Name       = 'Издатель'
         Expression = { $_.Issuer }
     }, @{
-        Name       = 'Thumbprint'
+        Name       = 'Отпечаток'
         Expression = { $_.Thumbprint }
     }, @{
-        Name       = 'NotBefore'
+        Name       = 'Действителен_с'
         Expression = { $_.NotBefore }
     }, @{
-        Name       = 'NotAfter'
+        Name       = 'Действителен_до'
         Expression = { $_.NotAfter }
     }, @{
-        Name       = 'DaysRemaining'
+        Name       = 'Дней_осталось'
         Expression = { [math]::Round(($_.NotAfter - (Get-Date)).TotalDays) }
     }, @{
-        Name       = 'HasPrivateKey'
+        Name       = 'Есть_закрытый_ключ'
         Expression = { $_.HasPrivateKey }
     }, @{
-        Name       = 'FriendlyName'
+        Name       = 'Понятное_имя'
         Expression = { $_.FriendlyName }
     }
 }
@@ -681,10 +690,9 @@ function Start-CryptoProCertMigrator {
                     }
                     
                     $password = Read-Host "Пароль для PFX файлов" -AsSecureString
-                    $passwordText = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($password))
                     
                     try {
-                        Export-CryptoProCertificates -Scope $scope -ExportFolder $folder -Password $passwordText -ShowProgress
+                        Export-CryptoProCertificates -Scope $scope -ExportFolder $folder -Password $password -ShowProgress
                         Write-Host "Экспорт завершен!" -ForegroundColor Green
                         Read-Host "Нажмите Enter для продолжения"
                     }
@@ -717,10 +725,9 @@ function Start-CryptoProCertMigrator {
                     }
                     
                     $password = Read-Host "Пароль для PFX файлов" -AsSecureString
-                    $passwordText = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($password))
                     
                     try {
-                        Import-CryptoProCertificates -Scope $scope -ImportFolder $folder -Password $passwordText -ShowProgress -SkipExisting
+                        Import-CryptoProCertificates -Scope $scope -ImportFolder $folder -Password $password -ShowProgress -SkipExisting
                         Write-Host "Импорт завершен!" -ForegroundColor Green
                         Read-Host "Нажмите Enter для продолжения"
                     }
@@ -746,16 +753,17 @@ function Start-CryptoProCertMigrator {
                 $confirm = Read-Host "Продолжить миграцию? (y/N)"
                 if ($confirm -eq "y" -or $confirm -eq "Y") {
                     $tempFolder = "$env:TEMP\CertMigration_$(Get-Date -Format 'yyyyMMdd_HHmmss')"
-                    $password = "TempMigration$(Get-Random -Minimum 100000 -Maximum 999999)"
+                    $passwordText = "TempMigration$(Get-Random -Minimum 100000 -Maximum 999999)"
+                    $password = ConvertTo-SecureString -String $passwordText -AsPlainText -Force
                     
                     try {
-                        Write-Host "Экспорт из CurrentUser..." -ForegroundColor Yellow
+                        Write-Host "Экспортируем из CurrentUser..." -ForegroundColor Yellow
                         Export-CryptoProCertificates -Scope CurrentUser -ExportFolder $tempFolder -Password $password -ShowProgress
                         
-                        Write-Host "Импорт в LocalMachine..." -ForegroundColor Yellow
+                        Write-Host "Импортируем в LocalMachine..." -ForegroundColor Yellow
                         Import-CryptoProCertificates -Scope LocalMachine -ImportFolder $tempFolder -Password $password -ShowProgress -SkipExisting
                         
-                        Write-Host "Очистка временных файлов..." -ForegroundColor Yellow
+                        Write-Host "Удаляем временные файлы..." -ForegroundColor Yellow
                         Remove-Item -Path $tempFolder -Recurse -Force
                         
                         Write-Host "Миграция успешно завершена!" -ForegroundColor Green
