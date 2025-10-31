@@ -14,6 +14,22 @@ function Test-AdminRights {
     return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+# Вспомогательная функция для клонирования SecureString
+function Copy-SecureString {
+    param(
+        [SecureString]$SecureString
+    )
+    
+    $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecureString)
+    try {
+        $plainText = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
+        return ConvertTo-SecureString -String $plainText -AsPlainText -Force
+    }
+    finally {
+        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
+    }
+}
+
 # Вспомогательная функция для валидации PFX файла
 function Test-PfxFile {
     param(
@@ -28,6 +44,7 @@ function Test-PfxFile {
     }
     catch {
         # Если не удалось открыть - файл поврежден или неверный пароль
+        Write-Verbose "Ошибка валидации PFX: $($_.Exception.Message)"
         return $false
     }
 }
@@ -409,13 +426,32 @@ function Import-CryptoProCertificates {
     # Сначала проверяем файлы
     Write-Host "Проверяем PFX файлы..."
     $validFiles = @()
+    $invalidFiles = @()
+    
     $pfxFiles | ForEach-Object {
+        Write-Verbose "Проверяем файл: $($_.Name)"
         if (Test-PfxFile -FilePath $_.FullName -Password $Password) {
             $validFiles += $_
+            Write-Verbose "✅ Файл корректен: $($_.Name)"
         }
         else {
-            Write-Warning "Неверный PFX файл или неправильный пароль: $($_.Name)"
+            $invalidFiles += $_
+            Write-Warning "❌ Неверный PFX файл или неправильный пароль: $($_.Name)"
         }
+    }
+    
+    # Показываем подробную статистику
+    if ($invalidFiles.Count -gt 0) {
+        Write-Host "⚠️  Проблемные файлы ($($invalidFiles.Count)):" -ForegroundColor Yellow
+        $invalidFiles | ForEach-Object {
+            Write-Host "   - $($_.Name) (размер: $([math]::Round($_.Length / 1KB, 2)) КБ)" -ForegroundColor Red
+        }
+        Write-Host ""
+        Write-Host "Возможные причины:" -ForegroundColor Yellow
+        Write-Host "   • Неправильный пароль" -ForegroundColor Gray
+        Write-Host "   • Поврежденный PFX файл" -ForegroundColor Gray
+        Write-Host "   • Файл создан с другим паролем" -ForegroundColor Gray
+        Write-Host ""
     }
 
     Write-Host "Корректных файлов: $($validFiles.Count) из $totalFiles"
@@ -875,7 +911,39 @@ function Start-CryptoProCertMigrator {
                         }
                     }
                     
-                    $password = Read-Host "Пароль для PFX файлов" -AsSecureString
+                    # Запрашиваем пароль с возможностью повтора
+                    $passwordAttempts = 0
+                    $maxAttempts = 3
+                    $validPassword = $false
+                    
+                    do {
+                        $passwordAttempts++
+                        $password = Read-Host "Пароль для PFX файлов (попытка $passwordAttempts из $maxAttempts)" -AsSecureString
+                        
+                        # Проверяем пароль на первом найденном PFX файле
+                        $testFile = Get-ChildItem -Path $folder -Filter "*.pfx" | Select-Object -First 1
+                        if ($testFile) {
+                            Write-Host "Проверяем пароль..." -ForegroundColor Gray
+                            if (Test-PfxFile -FilePath $testFile.FullName -Password $password) {
+                                Write-Host "✅ Пароль корректен" -ForegroundColor Green
+                                $validPassword = $true
+                            } else {
+                                Write-Host "❌ Неверный пароль" -ForegroundColor Red
+                                if ($passwordAttempts -lt $maxAttempts) {
+                                    Write-Host "Попробуйте еще раз..." -ForegroundColor Yellow
+                                }
+                            }
+                        } else {
+                            # Если нет PFX файлов, считаем пароль валидным
+                            $validPassword = $true
+                        }
+                    } while (-not $validPassword -and $passwordAttempts -lt $maxAttempts)
+                    
+                    if (-not $validPassword) {
+                        Write-Host "❌ Превышено количество попыток ввода пароля" -ForegroundColor Red
+                        Read-Host "Нажмите Enter для продолжения"
+                        continue
+                    }
                     
                     try {
                         Import-CryptoProCertificates -Scope $scope -ImportFolder $folder -Password $password -ShowProgress -SkipExisting
@@ -911,8 +979,11 @@ function Start-CryptoProCertMigrator {
                         Write-Host "Экспортируем из CurrentUser..." -ForegroundColor Yellow
                         Export-CryptoProCertificates -Scope CurrentUser -ExportFolder $tempFolder -Password $password -ShowProgress
                         
+                        # Клонируем пароль для импорта, чтобы избежать проблем с повторным использованием
+                        $importPassword = Copy-SecureString -SecureString $password
+                        
                         Write-Host "Импортируем в LocalMachine..." -ForegroundColor Yellow
-                        Import-CryptoProCertificates -Scope LocalMachine -ImportFolder $tempFolder -Password $password -ShowProgress -SkipExisting
+                        Import-CryptoProCertificates -Scope LocalMachine -ImportFolder $tempFolder -Password $importPassword -ShowProgress -SkipExisting
                         
                         Write-Host "Удаляем временные файлы..." -ForegroundColor Yellow
                         Remove-Item -Path $tempFolder -Recurse -Force
