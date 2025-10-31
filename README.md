@@ -7,20 +7,32 @@
 ### 📤 [Экспорт сертификатов в директорию для импорта](#экспорт-сертификатов-в-файлы)
 ```powershell
 Install-Module CPCertMigrator -Scope CurrentUser
+
+# Экспорт пользовательских сертификатов
 Export-CryptoProCertificates -Scope CurrentUser -ExportFolder "C:\certFolder" -Password "SuperSecurePass"
+
+# Экспорт машинных сертификатов (от имени администратора)
+Export-CryptoProCertificates -Scope LocalMachine -ExportFolder "C:\certFolder" -Password "SuperSecurePass"
 ```
 
 ### 📥 [Импорт сертификатов из директории экспорта](#импорт-сертификатов-из-файлов)
 ```powershell
+# Импорт в пользовательское хранилище
 Import-CryptoProCertificates -Scope CurrentUser -ImportFolder "C:\certFolder" -Password "SuperSecurePass"
+
+# Импорт в машинное хранилище (от имени администратора)
+Import-CryptoProCertificates -Scope LocalMachine -ImportFolder "C:\certFolder" -Password "SuperSecurePass"
 ```
 
 ### 🔄 [Перенос сертификатов и контейнеров](#перенос-на-другой-компьютер)
 ```powershell
-# Сохранить
+# Сохранить пользовательские
 Export-CryptoProCertificates -Scope CurrentUser -ExportFolder "C:\certFolder" -Password "SuperSecurePass"
 
-# Восстановить  
+# Сохранить машинные (от имени администратора)
+Export-CryptoProCertificates -Scope LocalMachine -ExportFolder "C:\certFolder" -Password "SuperSecurePass"
+
+# Восстановить в нужное хранилище
 Import-CryptoProCertificates -Scope CurrentUser -ImportFolder "C:\certFolder" -Password "SuperSecurePass"
 ```
 
