@@ -466,6 +466,9 @@ function Import-CryptoProCertificates {
     .PARAMETER SkipExisting
     Пропускать сертификаты, которые уже существуют в хранилище.
 
+    .PARAMETER SkipValidation
+    Пропустить предварительную проверку PFX файлов. Рекомендуется для решения проблем совместимости.
+
     .EXAMPLE
     Import-CryptoProCertificates -Scope CurrentUser -ImportFolder "C:\CertBackup" -Password "MySecurePassword"
     
@@ -480,6 +483,11 @@ function Import-CryptoProCertificates {
     Import-CryptoProCertificates -Scope CurrentUser -ImportFolder "C:\Backup" -Password "Pass123" -WhatIf
     
     Предварительный просмотр импорта без выполнения операций.
+
+    .EXAMPLE
+    Import-CryptoProCertificates -Scope CurrentUser -ImportFolder "C:\Backup" -Password "Pass123" -SkipValidation
+    
+    Прямой импорт без предварительной проверки файлов (рекомендуется при проблемах с паролями).
 
     .NOTES
     Требует установленный CryptoPro CSP.
@@ -1039,16 +1047,16 @@ function Start-CryptoProCertMigrator {
                     
                     # Предлагаем варианты проверки пароля
                     Write-Host ""
-                    Write-Host "Варианты проверки пароля:" -ForegroundColor Cyan
-                    Write-Host "1. Проверить пароль перед импортом (рекомендуется)" -ForegroundColor Green
-                    Write-Host "2. Пропустить проверку и импортировать напрямую" -ForegroundColor Yellow
+                    Write-Host "Варианты импорта:" -ForegroundColor Cyan
+                    Write-Host "1. Прямой импорт без проверки (рекомендуется, работает надежнее)" -ForegroundColor Green
+                    Write-Host "2. С предварительной проверкой пароля" -ForegroundColor Yellow
                     Write-Host ""
                     
-                    $validationChoice = Read-Host "Выберите вариант (1/2)"
+                    $validationChoice = Read-Host "Выберите вариант (1/2, по умолчанию 1)"
                     
-                    if ($validationChoice -eq "2") {
-                        # Пропускаем проверку
-                        Write-Host "⚠️  Проверка пароля пропущена" -ForegroundColor Yellow
+                    if ([string]::IsNullOrWhiteSpace($validationChoice) -or $validationChoice -eq "1") {
+                        # Прямой импорт (по умолчанию)
+                        Write-Host "✅ Выбран прямой импорт (как ручной импорт)" -ForegroundColor Green
                         $password = Read-Host "Введите пароль для импорта" -AsSecureString
                         $validPassword = $true
                         $debugMode = $true
