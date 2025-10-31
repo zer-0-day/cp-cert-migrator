@@ -1,4 +1,4 @@
-# Локальное тестирование модуля CPCertMigrator
+﻿# Локальное тестирование модуля CPCertMigrator
 
 Write-Host "=== ТЕСТИРОВАНИЕ МОДУЛЯ CPCertMigrator ===" -ForegroundColor Cyan
 

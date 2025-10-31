@@ -1,4 +1,4 @@
-# CPCertMigrator
+﻿# CPCertMigrator
 
 **Экспорт и импорт сертификатов CryptoPro CSP** - просто и быстро
 
