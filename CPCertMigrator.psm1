@@ -526,38 +526,44 @@ function Import-CryptoProCertificates {
         return
     }
 
-    # Сначала проверяем файлы
-    Write-Host "Проверяем PFX файлы..."
-    $validFiles = @()
-    $invalidFiles = @()
-    
-    $pfxFiles | ForEach-Object {
-        Write-Verbose "Проверяем файл: $($_.Name)"
-        if (Test-PfxFile -FilePath $_.FullName -Password $Password -SkipValidation:$SkipValidation) {
-            $validFiles += $_
-            Write-Verbose "✅ Файл корректен: $($_.Name)"
+    # Проверяем файлы только если не пропускаем валидацию
+    if (-not $SkipValidation) {
+        Write-Host "Проверяем PFX файлы..."
+        $validFiles = @()
+        $invalidFiles = @()
+        
+        $pfxFiles | ForEach-Object {
+            Write-Verbose "Проверяем файл: $($_.Name)"
+            if (Test-PfxFile -FilePath $_.FullName -Password $Password) {
+                $validFiles += $_
+                Write-Verbose "✅ Файл корректен: $($_.Name)"
+            }
+            else {
+                $invalidFiles += $_
+                Write-Warning "❌ Неверный PFX файл или неправильный пароль: $($_.Name)"
+            }
         }
-        else {
-            $invalidFiles += $_
-            Write-Warning "❌ Неверный PFX файл или неправильный пароль: $($_.Name)"
+        
+        # Показываем подробную статистику
+        if ($invalidFiles.Count -gt 0) {
+            Write-Host "⚠️  Проблемные файлы ($($invalidFiles.Count)):" -ForegroundColor Yellow
+            $invalidFiles | ForEach-Object {
+                Write-Host "   - $($_.Name) (размер: $([math]::Round($_.Length / 1KB, 2)) КБ)" -ForegroundColor Red
+            }
+            Write-Host ""
+            Write-Host "Возможные причины:" -ForegroundColor Yellow
+            Write-Host "   • Неправильный пароль" -ForegroundColor Gray
+            Write-Host "   • Поврежденный PFX файл" -ForegroundColor Gray
+            Write-Host "   • Файл создан с другим паролем" -ForegroundColor Gray
+            Write-Host ""
         }
-    }
-    
-    # Показываем подробную статистику
-    if ($invalidFiles.Count -gt 0) {
-        Write-Host "⚠️  Проблемные файлы ($($invalidFiles.Count)):" -ForegroundColor Yellow
-        $invalidFiles | ForEach-Object {
-            Write-Host "   - $($_.Name) (размер: $([math]::Round($_.Length / 1KB, 2)) КБ)" -ForegroundColor Red
-        }
-        Write-Host ""
-        Write-Host "Возможные причины:" -ForegroundColor Yellow
-        Write-Host "   • Неправильный пароль" -ForegroundColor Gray
-        Write-Host "   • Поврежденный PFX файл" -ForegroundColor Gray
-        Write-Host "   • Файл создан с другим паролем" -ForegroundColor Gray
-        Write-Host ""
-    }
 
-    Write-Host "Корректных файлов: $($validFiles.Count) из $totalFiles"
+        Write-Host "Корректных файлов: $($validFiles.Count) из $totalFiles"
+    } else {
+        # В режиме пропуска валидации считаем все файлы корректными
+        Write-Host "⚠️  Валидация пропущена - будем пытаться импортировать все файлы" -ForegroundColor Yellow
+        $validFiles = $pfxFiles
+    }
 
     if ($WhatIfPreference) {
         Write-Host "Предварительный просмотр: будут импортированы следующие файлы:"
@@ -598,21 +604,27 @@ function Import-CryptoProCertificates {
         Write-Verbose "Импортируем: Область=$Scope, Файл=$file"
 
         try {
-            # Получаем информацию о сертификате для проверки дубликатов
-            $tempCert = Get-PfxCertificate -FilePath $file -Password $pwdSecure
+            Write-Verbose "Импортируем файл: $file"
             
-            if ($SkipExisting -and $existingCerts.ContainsKey($tempCert.Thumbprint)) {
-                $line = ("{0},{1},{2},{3},{4},Пропущен,Сертификат уже существует" -f (Get-Date -Format s), $Scope, $fileName, $tempCert.Thumbprint, $tempCert.Subject)
+            # Импортируем сертификат напрямую (как в рабочем скрипте)
+            $importedCert = Import-PfxCertificate -FilePath $file -CertStoreLocation $targetStore -Password $pwdSecure -Exportable -ErrorAction Stop
+            
+            # Проверяем дубликаты после импорта
+            if ($SkipExisting -and $existingCerts.ContainsKey($importedCert.Thumbprint)) {
+                # Удаляем только что импортированный дубликат
+                Remove-Item -Path "$targetStore\$($importedCert.Thumbprint)" -ErrorAction SilentlyContinue
+                $line = ("{0},{1},{2},{3},{4},Пропущен,Сертификат уже существует" -f (Get-Date -Format s), $Scope, $fileName, $importedCert.Thumbprint, $importedCert.Subject)
                 $line | Out-File -FilePath $logFile -Append -Encoding UTF8
                 $skipped++
-                Write-Verbose "Пропущен существующий сертификат: $($tempCert.Subject)"
+                Write-Verbose "Пропущен существующий сертификат: $($importedCert.Subject)"
                 return
             }
-
-            Import-PfxCertificate -FilePath $file -CertStoreLocation $targetStore -Password $pwdSecure -Exportable
-            $line = ("{0},{1},{2},{3},{4},Успешно," -f (Get-Date -Format s), $Scope, $fileName, $tempCert.Thumbprint, $tempCert.Subject)
+            
+            # Успешный импорт
+            $line = ("{0},{1},{2},{3},{4},Успешно," -f (Get-Date -Format s), $Scope, $fileName, $importedCert.Thumbprint, $importedCert.Subject)
             $line | Out-File -FilePath $logFile -Append -Encoding UTF8
             $imported++
+            Write-Verbose "✅ Успешно импортирован: $($importedCert.Subject)"
         }
         catch {
             $detail = $_.Exception.Message.Replace(",", ";")
@@ -1025,34 +1037,51 @@ function Start-CryptoProCertMigrator {
                         }
                     }
                     
-                    # Запрашиваем пароль с возможностью повтора
-                    $passwordAttempts = 0
-                    $maxAttempts = 3
-                    $validPassword = $false
-                    $debugMode = $false
+                    # Предлагаем варианты проверки пароля
+                    Write-Host ""
+                    Write-Host "Варианты проверки пароля:" -ForegroundColor Cyan
+                    Write-Host "1. Проверить пароль перед импортом (рекомендуется)" -ForegroundColor Green
+                    Write-Host "2. Пропустить проверку и импортировать напрямую" -ForegroundColor Yellow
+                    Write-Host ""
                     
-                    do {
-                        $passwordAttempts++
-                        $password = Read-Host "Пароль для PFX файлов (попытка $passwordAttempts из $maxAttempts)" -AsSecureString
+                    $validationChoice = Read-Host "Выберите вариант (1/2)"
+                    
+                    if ($validationChoice -eq "2") {
+                        # Пропускаем проверку
+                        Write-Host "⚠️  Проверка пароля пропущена" -ForegroundColor Yellow
+                        $password = Read-Host "Введите пароль для импорта" -AsSecureString
+                        $validPassword = $true
+                        $debugMode = $true
+                    } else {
+                        # Стандартная проверка пароля
+                        $passwordAttempts = 0
+                        $maxAttempts = 3
+                        $validPassword = $false
+                        $debugMode = $false
                         
-                        # Проверяем пароль на первом найденном PFX файле
-                        $testFile = Get-ChildItem -Path $folder -Filter "*.pfx" | Select-Object -First 1
-                        if ($testFile) {
-                            Write-Host "Проверяем пароль..." -ForegroundColor Gray
-                            if (Test-PfxFile -FilePath $testFile.FullName -Password $password) {
-                                Write-Host "✅ Пароль корректен" -ForegroundColor Green
-                                $validPassword = $true
-                            } else {
-                                Write-Host "❌ Неверный пароль" -ForegroundColor Red
-                                if ($passwordAttempts -lt $maxAttempts) {
-                                    Write-Host "Попробуйте еще раз..." -ForegroundColor Yellow
+                        do {
+                            $passwordAttempts++
+                            $password = Read-Host "Пароль для PFX файлов (попытка $passwordAttempts из $maxAttempts)" -AsSecureString
+                            
+                            # Проверяем пароль на первом найденном PFX файле
+                            $testFile = Get-ChildItem -Path $folder -Filter "*.pfx" | Select-Object -First 1
+                            if ($testFile) {
+                                Write-Host "Проверяем пароль..." -ForegroundColor Gray
+                                if (Test-PfxFile -FilePath $testFile.FullName -Password $password) {
+                                    Write-Host "✅ Пароль корректен" -ForegroundColor Green
+                                    $validPassword = $true
+                                } else {
+                                    Write-Host "❌ Неверный пароль" -ForegroundColor Red
+                                    if ($passwordAttempts -lt $maxAttempts) {
+                                        Write-Host "Попробуйте еще раз..." -ForegroundColor Yellow
+                                    }
                                 }
+                            } else {
+                                # Если нет PFX файлов, считаем пароль валидным
+                                $validPassword = $true
                             }
-                        } else {
-                            # Если нет PFX файлов, считаем пароль валидным
-                            $validPassword = $true
-                        }
-                    } while (-not $validPassword -and $passwordAttempts -lt $maxAttempts)
+                        } while (-not $validPassword -and $passwordAttempts -lt $maxAttempts)
+                    }
                     
                     if (-not $validPassword) {
                         Write-Host "❌ Превышено количество попыток ввода пароля" -ForegroundColor Red
