@@ -3,7 +3,7 @@
     RootModule        = 'CPCertMigrator.psm1'
 
     # Version number of this module
-    ModuleVersion     = '1.7.1'
+    ModuleVersion     = '1.7.2'
 
     # ID used to uniquely identify this module
     GUID              = 'd4f2c6b2-8e10-4a63-9a8b-2f8cd5109e6a'
@@ -18,7 +18,7 @@
     PowerShellVersion = '5.1'
 
     # Functions to export
-    FunctionsToExport = @('Export-CryptoProCertificates','Import-CryptoProCertificates','Get-CryptoProCertificates','Start-CryptoProCertMigrator')
+    FunctionsToExport = @('Export-CryptoProCertificates', 'Import-CryptoProCertificates', 'Get-CryptoProCertificates', 'Start-CryptoProCertMigrator')
 
     # Cmdlets to export; none in this case
     CmdletsToExport   = @()
@@ -32,10 +32,10 @@
     # Private data for module metadata like tags, license, project URI
     PrivateData       = @{
         PSData = @{
-            Tags        = @('CryptoPro','CSP','Certificate','Migration','Console')
-            LicenseUri  = 'https://opensource.org/licenses/MIT'
-            ProjectUri  = 'https://github.com/YourOrg/CryptoProCertMigrator'
-            ReleaseNotes= 'Version 1.1.0 - Added interactive console menu and enhanced functionality'
+            Tags         = @('CryptoPro', 'CSP', 'Certificate', 'Migration', 'Console')
+            LicenseUri   = 'https://opensource.org/licenses/MIT'
+            ProjectUri   = 'https://github.com/YourOrg/CryptoProCertMigrator'
+            ReleaseNotes = 'Version 1.1.0 - Added interactive console menu and enhanced functionality'
         }
     }
 }

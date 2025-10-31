@@ -607,6 +607,7 @@ function Start-CryptoProCertMigrator {
     .DESCRIPTION
     Функция предоставляет удобное интерактивное меню для выполнения основных операций
     с сертификатами: просмотр, экспорт, импорт и быстрая миграция между хранилищами.
+    Включает предварительную проверку системы и отображение статуса сертификатов.
     Подходит для пользователей, которые предпочитают пошаговый интерфейс.
 
     .EXAMPLE
@@ -617,27 +618,142 @@ function Start-CryptoProCertMigrator {
     2. Экспорт сертификатов  
     3. Импорт сертификатов
     4. Быстрая миграция CurrentUser -> LocalMachine
+    5. Повторить проверку системы
 
     .NOTES
     Требует установленный CryptoPro CSP.
     Для операций с LocalMachine необходимы права администратора.
+    Автоматически проверяет состояние системы при запуске.
+    Показывает количество сертификатов в каждом хранилище.
     Меню работает в цикле до выбора пункта "Выход".
     #>
     [CmdletBinding()]
     param()
 
+    # Предварительное тестирование системы
+    function Test-SystemStatus {
+        Write-Host "=== ПРОВЕРКА СИСТЕМЫ ===" -ForegroundColor Cyan
+        Write-Host ""
+        
+        # Проверка прав администратора
+        $isAdmin = Test-AdminRights
+        if ($isAdmin) {
+            Write-Host "✅ Права администратора: Есть" -ForegroundColor Green
+        } else {
+            Write-Host "⚠️  Права администратора: Нет (ограниченный функционал)" -ForegroundColor Yellow
+        }
+        
+        # Проверка доступности хранилища CurrentUser
+        Write-Host "📁 Проверка хранилища CurrentUser..." -ForegroundColor Gray
+        try {
+            $userCerts = Get-CryptoProCertificates -Scope CurrentUser -ErrorAction Stop
+            Write-Host "✅ CurrentUser: найдено $($userCerts.Count) сертификатов" -ForegroundColor Green
+            
+            if ($userCerts.Count -gt 0) {
+                $expiringSoon = $userCerts | Where-Object { $_."Дней_осталось" -lt 30 }
+                $expired = $userCerts | Where-Object { $_."Дней_осталось" -lt 0 }
+                
+                if ($expired.Count -gt 0) {
+                    Write-Host "   ❌ Истекших: $($expired.Count)" -ForegroundColor Red
+                }
+                if ($expiringSoon.Count -gt 0) {
+                    Write-Host "   ⚠️  Истекают скоро (< 30 дней): $($expiringSoon.Count)" -ForegroundColor Yellow
+                }
+                
+                $withPrivateKey = $userCerts | Where-Object { $_."Есть_закрытый_ключ" -eq $true }
+                Write-Host "   🔑 С закрытым ключом: $($withPrivateKey.Count)" -ForegroundColor Cyan
+            }
+        }
+        catch {
+            Write-Host "❌ CurrentUser: Ошибка доступа - $($_.Exception.Message)" -ForegroundColor Red
+        }
+        
+        # Проверка доступности хранилища LocalMachine
+        Write-Host "📁 Проверка хранилища LocalMachine..." -ForegroundColor Gray
+        if ($isAdmin) {
+            try {
+                $machineCerts = Get-CryptoProCertificates -Scope LocalMachine -ErrorAction Stop
+                Write-Host "✅ LocalMachine: найдено $($machineCerts.Count) сертификатов" -ForegroundColor Green
+                
+                if ($machineCerts.Count -gt 0) {
+                    $expiringSoon = $machineCerts | Where-Object { $_."Дней_осталось" -lt 30 }
+                    $expired = $machineCerts | Where-Object { $_."Дней_осталось" -lt 0 }
+                    
+                    if ($expired.Count -gt 0) {
+                        Write-Host "   ❌ Истекших: $($expired.Count)" -ForegroundColor Red
+                    }
+                    if ($expiringSoon.Count -gt 0) {
+                        Write-Host "   ⚠️  Истекают скоро (< 30 дней): $($expiringSoon.Count)" -ForegroundColor Yellow
+                    }
+                    
+                    $withPrivateKey = $machineCerts | Where-Object { $_."Есть_закрытый_ключ" -eq $true }
+                    Write-Host "   🔑 С закрытым ключом: $($withPrivateKey.Count)" -ForegroundColor Cyan
+                }
+            }
+            catch {
+                Write-Host "❌ LocalMachine: Ошибка доступа - $($_.Exception.Message)" -ForegroundColor Red
+            }
+        } else {
+            Write-Host "⚠️  LocalMachine: Недоступно (нужны права администратора)" -ForegroundColor Yellow
+        }
+        
+        # Проверка CryptoPro CSP
+        Write-Host "🔐 Проверка CryptoPro CSP..." -ForegroundColor Gray
+        try {
+            if (Test-Path "Cert:\CurrentUser\My") {
+                Write-Host "✅ CryptoPro CSP: Установлен и доступен" -ForegroundColor Green
+            } else {
+                Write-Host "❌ CryptoPro CSP: Не найден или не установлен" -ForegroundColor Red
+            }
+        }
+        catch {
+            Write-Host "❌ CryptoPro CSP: Ошибка проверки - $($_.Exception.Message)" -ForegroundColor Red
+        }
+        
+        Write-Host ""
+        Write-Host "Нажмите любую клавишу для продолжения..." -ForegroundColor Gray
+        $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    }
+    
+    # Запускаем предварительное тестирование
+    Test-SystemStatus
+
     do {
         Clear-Host
         Write-Host "=== CryptoPro Certificate Migrator ===" -ForegroundColor Cyan
+        Write-Host ""
+        
+        # Показываем краткий статус
+        $isAdmin = Test-AdminRights
+        $adminStatus = if ($isAdmin) { "Администратор" } else { "Пользователь" }
+        Write-Host "Статус: $adminStatus" -ForegroundColor $(if ($isAdmin) { "Green" } else { "Yellow" })
+        
+        try {
+            $userCount = (Get-CryptoProCertificates -Scope CurrentUser -ErrorAction SilentlyContinue).Count
+            Write-Host "CurrentUser: $userCount сертификатов" -ForegroundColor Cyan
+        } catch {
+            Write-Host "CurrentUser: недоступно" -ForegroundColor Red
+        }
+        
+        if ($isAdmin) {
+            try {
+                $machineCount = (Get-CryptoProCertificates -Scope LocalMachine -ErrorAction SilentlyContinue).Count
+                Write-Host "LocalMachine: $machineCount сертификатов" -ForegroundColor Cyan
+            } catch {
+                Write-Host "LocalMachine: недоступно" -ForegroundColor Red
+            }
+        }
+        
         Write-Host ""
         Write-Host "1. Просмотр сертификатов" -ForegroundColor Green
         Write-Host "2. Экспорт сертификатов" -ForegroundColor Yellow
         Write-Host "3. Импорт сертификатов" -ForegroundColor Yellow
         Write-Host "4. Быстрая миграция (CurrentUser -> LocalMachine)" -ForegroundColor Magenta
+        Write-Host "5. Повторить проверку системы" -ForegroundColor Blue
         Write-Host "0. Выход" -ForegroundColor Red
         Write-Host ""
         
-        $choice = Read-Host "Выберите действие (0-4)"
+        $choice = Read-Host "Выберите действие (0-5)"
         
         switch ($choice) {
             "1" {
@@ -777,6 +893,10 @@ function Start-CryptoProCertMigrator {
                         Read-Host "Нажмите Enter для продолжения"
                     }
                 }
+            }
+            "5" {
+                # Повторная проверка системы
+                Test-SystemStatus
             }
             "0" {
                 Write-Host "До свидания!" -ForegroundColor Green
