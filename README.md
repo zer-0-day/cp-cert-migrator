@@ -32,6 +32,8 @@ Start-CryptoProCertMigrator
 
 ### 🔍 [Как это работает технически?](#как-работает-модуль)
 
+> **💡 Совет:** Для работы с сертификатами компьютера (LocalMachine) нужны права администратора. Запустите PowerShell от имени администратора.
+
 ---
 
 ## 📋 Подробные инструкции
@@ -47,8 +49,11 @@ Install-Module CPCertMigrator -Scope CurrentUser
 # 2. Либо обновить модуль
 Update-Module CPCertMigrator -Scope CurrentUser
 
-# 3. Сохранить все сертификаты
+# 3. Сохранить сертификаты пользователя
 Export-CryptoProCertificates -Scope CurrentUser -ExportFolder "C:\certFolder" -Password "SuperSecurePass"
+
+# 4. Или сохранить сертификаты компьютера (нужны права администратора)
+Export-CryptoProCertificates -Scope LocalMachine -ExportFolder "C:\certFolder" -Password "SuperSecurePass"
 ```
 
 **Результат:** Папка с файлами .pfx, каждый содержит один сертификат
@@ -58,11 +63,14 @@ Export-CryptoProCertificates -Scope CurrentUser -ExportFolder "C:\certFolder" -P
 **Зачем:** Восстановить сертификаты из сохраненных файлов
 
 ```powershell
-# Восстановить сертификаты из папки
+# Восстановить в хранилище пользователя
 Import-CryptoProCertificates -Scope CurrentUser -ImportFolder "C:\certFolder" -Password "SuperSecurePass"
+
+# Или восстановить в хранилище компьютера (нужны права администратора)
+Import-CryptoProCertificates -Scope LocalMachine -ImportFolder "C:\certFolder" -Password "SuperSecurePass"
 ```
 
-**Результат:** Все сертификаты появятся в хранилище Windows
+**Результат:** Все сертификаты появятся в выбранном хранилище Windows
 
 ### Перенос на другой компьютер
 
@@ -70,13 +78,22 @@ Import-CryptoProCertificates -Scope CurrentUser -ImportFolder "C:\certFolder" -P
 
 ```powershell
 # НА СТАРОМ КОМПЬЮТЕРЕ:
+# Экспорт пользовательских сертификатов
 Export-CryptoProCertificates -Scope CurrentUser -ExportFolder "C:\certFolder" -Password "SuperSecurePass"
+
+# Экспорт машинных сертификатов (от имени администратора)
+Export-CryptoProCertificates -Scope LocalMachine -ExportFolder "C:\certFolder" -Password "SuperSecurePass"
 
 # Скопировать папку C:\certFolder на новый компьютер
 
 # НА НОВОМ КОМПЬЮТЕРЕ:
 Install-Module CPCertMigrator -Scope CurrentUser
+
+# Импорт в пользовательское хранилище
 Import-CryptoProCertificates -Scope CurrentUser -ImportFolder "C:\certFolder" -Password "SuperSecurePass"
+
+# Импорт в машинное хранилище (от имени администратора)
+Import-CryptoProCertificates -Scope LocalMachine -ImportFolder "C:\certFolder" -Password "SuperSecurePass"
 ```
 
 ### Простое меню
@@ -106,20 +123,29 @@ Start-CryptoProCertMigrator
 
 ### Посмотреть что есть
 ```powershell
-# Список всех сертификатов
+# Сертификаты пользователя
 Get-CryptoProCertificates -Scope CurrentUser
+
+# Сертификаты компьютера (от имени администратора)
+Get-CryptoProCertificates -Scope LocalMachine
 ```
 
 ### Предварительный просмотр (WhatIf)
 ```powershell
-# Посмотреть что будет экспортировано (без выполнения)
+# Посмотреть что будет экспортировано из пользовательского хранилища
 Export-CryptoProCertificates -Scope CurrentUser -ExportFolder "C:\Test" -Password "Pass" -WhatIf
+
+# Посмотреть что будет экспортировано из машинного хранилища
+Export-CryptoProCertificates -Scope LocalMachine -ExportFolder "C:\Test" -Password "Pass" -WhatIf
 ```
 
 ### Фильтрация
 ```powershell
-# Только сертификаты определенной организации
+# Только сертификаты определенной организации (пользовательские)
 Export-CryptoProCertificates -Scope CurrentUser -ExportFolder "C:\Backup" -Password "Pass" -SubjectFilter "МояОрганизация"
+
+# Только сертификаты определенной организации (машинные)
+Export-CryptoProCertificates -Scope LocalMachine -ExportFolder "C:\Backup" -Password "Pass" -SubjectFilter "МояОрганизация"
 ```
 
 ### Подробная информация
@@ -133,7 +159,9 @@ Export-CryptoProCertificates -Scope CurrentUser -ExportFolder "C:\Backup" -Passw
 
 **Забыл пароль от файлов** - без пароля восстановить нельзя, используйте запоминающиеся пароли
 
-**Нужны права администратора?** - нет, кроме машинного хранилища (LocalMachine)
+**Нужны права администратора?** - только для LocalMachine (машинное хранилище). Для CurrentUser (пользовательское) - нет
+
+**В чем разница между CurrentUser и LocalMachine?** - CurrentUser доступен только текущему пользователю, LocalMachine - всем пользователям компьютера
 
 **Безопасно ли?** - да, все операции локальные, данные не передаются в интернет
 
