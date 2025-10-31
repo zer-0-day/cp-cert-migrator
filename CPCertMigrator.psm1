@@ -805,6 +805,22 @@ function Start-CryptoProCertMigrator {
                         $folder = "$env:USERPROFILE\Desktop\CertExport"
                     }
                     
+                    # Автоматическое создание папки если она не существует
+                    if (-not (Test-Path $folder)) {
+                        try {
+                            Write-Host "Создаем папку: $folder" -ForegroundColor Yellow
+                            New-Item -ItemType Directory -Path $folder -Force | Out-Null
+                            Write-Host "✅ Папка успешно создана" -ForegroundColor Green
+                        }
+                        catch {
+                            Write-Host "❌ Не удалось создать папку: $($_.Exception.Message)" -ForegroundColor Red
+                            Read-Host "Нажмите Enter для продолжения"
+                            continue
+                        }
+                    } else {
+                        Write-Host "✅ Папка существует: $folder" -ForegroundColor Green
+                    }
+                    
                     $password = Read-Host "Пароль для PFX файлов" -AsSecureString
                     
                     try {
@@ -838,6 +854,25 @@ function Start-CryptoProCertMigrator {
                     $folder = Read-Host "Папка с PFX файлами (по умолчанию: $env:USERPROFILE\Desktop\CertExport)"
                     if ([string]::IsNullOrWhiteSpace($folder)) {
                         $folder = "$env:USERPROFILE\Desktop\CertExport"
+                    }
+                    
+                    # Проверка существования папки для импорта
+                    if (-not (Test-Path $folder)) {
+                        Write-Host "❌ Папка не существует: $folder" -ForegroundColor Red
+                        Write-Host "Создайте папку или укажите существующую папку с PFX файлами" -ForegroundColor Yellow
+                        Read-Host "Нажмите Enter для продолжения"
+                        continue
+                    } else {
+                        $pfxCount = (Get-ChildItem -Path $folder -Filter "*.pfx" -ErrorAction SilentlyContinue).Count
+                        if ($pfxCount -eq 0) {
+                            Write-Host "⚠️  В папке нет PFX файлов: $folder" -ForegroundColor Yellow
+                            $confirm = Read-Host "Продолжить импорт? (y/N)"
+                            if ($confirm -ne 'y' -and $confirm -ne 'Y') {
+                                continue
+                            }
+                        } else {
+                            Write-Host "✅ Найдено PFX файлов: $pfxCount в папке $folder" -ForegroundColor Green
+                        }
                     }
                     
                     $password = Read-Host "Пароль для PFX файлов" -AsSecureString
