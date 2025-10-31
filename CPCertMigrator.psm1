@@ -117,17 +117,34 @@ function Copy-SecureString {
 function Test-PfxFile {
     param(
         [string]$FilePath,        # Путь к PFX файлу
-        [SecureString]$Password   # Пароль для расшифровки (защищенная строка)
+        [SecureString]$Password,  # Пароль для расшифровки (защищенная строка)
+        [switch]$SkipValidation   # Пропустить валидацию (для отладки)
     )
     
-    try {
-        # Пытаемся открыть PFX файл с указанным паролем
-        $null = Get-PfxCertificate -FilePath $FilePath -Password $Password
+    if ($SkipValidation) {
+        Write-Verbose "⚠️  Валидация PFX пропущена по запросу"
         return $true
+    }
+    
+    try {
+        Write-Verbose "Проверяем PFX файл: $FilePath"
+        
+        # Пытаемся открыть PFX файл с указанным паролем
+        $cert = Get-PfxCertificate -FilePath $FilePath -Password $Password -ErrorAction Stop
+        
+        if ($cert) {
+            Write-Verbose "✅ PFX файл корректен. Субъект: $($cert.Subject)"
+            return $true
+        } else {
+            Write-Verbose "❌ PFX файл не содержит сертификат"
+            return $false
+        }
     }
     catch {
         # Если не удалось открыть - файл поврежден или неверный пароль
-        Write-Verbose "Ошибка валидации PFX: $($_.Exception.Message)"
+        Write-Verbose "❌ Ошибка валидации PFX: $($_.Exception.Message)"
+        Write-Verbose "   Файл: $FilePath"
+        Write-Verbose "   Размер файла: $((Get-Item $FilePath -ErrorAction SilentlyContinue).Length) байт"
         return $false
     }
 }
@@ -485,7 +502,10 @@ function Import-CryptoProCertificates {
         [switch] $ShowProgress,
 
         [Parameter()]
-        [switch] $SkipExisting
+        [switch] $SkipExisting,
+
+        [Parameter()]
+        [switch] $SkipValidation
     )
 
     # Проверяем права администратора для области LocalMachine
@@ -513,7 +533,7 @@ function Import-CryptoProCertificates {
     
     $pfxFiles | ForEach-Object {
         Write-Verbose "Проверяем файл: $($_.Name)"
-        if (Test-PfxFile -FilePath $_.FullName -Password $Password) {
+        if (Test-PfxFile -FilePath $_.FullName -Password $Password -SkipValidation:$SkipValidation) {
             $validFiles += $_
             Write-Verbose "✅ Файл корректен: $($_.Name)"
         }
@@ -1009,6 +1029,7 @@ function Start-CryptoProCertMigrator {
                     $passwordAttempts = 0
                     $maxAttempts = 3
                     $validPassword = $false
+                    $debugMode = $false
                     
                     do {
                         $passwordAttempts++
@@ -1035,12 +1056,42 @@ function Start-CryptoProCertMigrator {
                     
                     if (-not $validPassword) {
                         Write-Host "❌ Превышено количество попыток ввода пароля" -ForegroundColor Red
-                        Read-Host "Нажмите Enter для продолжения"
-                        continue
+                        Write-Host ""
+                        Write-Host "Варианты решения проблемы:" -ForegroundColor Yellow
+                        Write-Host "1. Попробовать снова с правильным паролем" -ForegroundColor Gray
+                        Write-Host "2. Продолжить импорт без проверки пароля (отладочный режим)" -ForegroundColor Gray
+                        Write-Host "3. Вернуться в главное меню" -ForegroundColor Gray
+                        Write-Host ""
+                        
+                        $debugChoice = Read-Host "Выберите действие (1/2/3)"
+                        
+                        switch ($debugChoice) {
+                            "1" {
+                                # Сбрасываем счетчики и пробуем снова
+                                $passwordAttempts = 0
+                                $validPassword = $false
+                                continue
+                            }
+                            "2" {
+                                # Отладочный режим - пропускаем валидацию
+                                Write-Host "⚠️  ОТЛАДОЧНЫЙ РЕЖИМ: Валидация пароля отключена" -ForegroundColor Yellow
+                                $password = Read-Host "Введите пароль для импорта" -AsSecureString
+                                $validPassword = $true
+                                $debugMode = $true
+                            }
+                            default {
+                                # Возвращаемся в меню
+                                continue
+                            }
+                        }
                     }
                     
                     try {
-                        Import-CryptoProCertificates -Scope $scope -ImportFolder $folder -Password $password -ShowProgress -SkipExisting
+                        if ($debugMode) {
+                            Import-CryptoProCertificates -Scope $scope -ImportFolder $folder -Password $password -ShowProgress -SkipExisting -SkipValidation
+                        } else {
+                            Import-CryptoProCertificates -Scope $scope -ImportFolder $folder -Password $password -ShowProgress -SkipExisting
+                        }
                         Write-Host "Импорт завершен!" -ForegroundColor Green
                         Read-Host "Нажмите Enter для продолжения"
                     }
