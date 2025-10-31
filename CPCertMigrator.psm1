@@ -14,6 +14,89 @@ function Test-AdminRights {
     return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+# Вспомогательная функция для проверки установки CryptoPro CSP
+function Test-CryptoProCSP {
+    <#
+    .SYNOPSIS
+    Проверяет, установлен ли CryptoPro CSP в системе.
+    
+    .DESCRIPTION
+    Функция использует несколько методов для определения наличия CryptoPro CSP:
+    - Проверка CSP провайдеров через WMI
+    - Проверка записей в реестре
+    - Проверка ГОСТ алгоритмов в системе
+    
+    .OUTPUTS
+    Возвращает объект с информацией о статусе CryptoPro CSP
+    #>
+    
+    $result = @{
+        IsInstalled = $false
+        Version = "Не определена"
+        Method = "Не найден"
+        Details = @()
+    }
+    
+    # Метод 1: Проверка через WMI (CSP провайдеры)
+    try {
+        $cspProviders = Get-WmiObject -Class Win32_CSPProvider -ErrorAction SilentlyContinue | 
+                       Where-Object { $_.Name -like "*Crypto*Pro*" -or $_.Name -like "*ГОСТ*" }
+        if ($cspProviders) {
+            $result.IsInstalled = $true
+            $result.Method = "WMI CSP провайдеры"
+            $result.Details += $cspProviders.Name
+        }
+    }
+    catch {
+        Write-Verbose "WMI проверка не удалась: $($_.Exception.Message)"
+    }
+    
+    # Метод 2: Проверка через реестр
+    if (-not $result.IsInstalled) {
+        try {
+            $regPath = "HKLM:\SOFTWARE\Crypto Pro"
+            if (Test-Path $regPath) {
+                $result.IsInstalled = $true
+                $result.Method = "Реестр Windows"
+                
+                # Пытаемся получить версию
+                $versionPath = "$regPath\Settings\Base CSP"
+                if (Test-Path $versionPath) {
+                    $version = Get-ItemProperty -Path $versionPath -Name "Version" -ErrorAction SilentlyContinue
+                    if ($version) {
+                        $result.Version = $version.Version
+                    }
+                }
+                $result.Details += "Найден в $regPath"
+            }
+        }
+        catch {
+            Write-Verbose "Проверка реестра не удалась: $($_.Exception.Message)"
+        }
+    }
+    
+    # Метод 3: Проверка ГОСТ алгоритмов
+    if (-not $result.IsInstalled) {
+        try {
+            $gostRegPath = "HKLM:\SOFTWARE\Microsoft\Cryptography\OID\EncodingType 0\CryptSIPDllGetSignedDataMsg"
+            if (Test-Path $gostRegPath) {
+                $gostAlgorithms = Get-ChildItem $gostRegPath -ErrorAction SilentlyContinue | 
+                                Where-Object { $_.Name -like "*1.2.643*" }
+                if ($gostAlgorithms) {
+                    $result.IsInstalled = $true
+                    $result.Method = "ГОСТ алгоритмы"
+                    $result.Details += "Найдены ГОСТ OID в системе"
+                }
+            }
+        }
+        catch {
+            Write-Verbose "Проверка ГОСТ алгоритмов не удалась: $($_.Exception.Message)"
+        }
+    }
+    
+    return $result
+}
+
 # Вспомогательная функция для клонирования SecureString
 function Copy-SecureString {
     param(
@@ -736,10 +819,21 @@ function Start-CryptoProCertMigrator {
         # Проверка CryptoPro CSP
         Write-Host "🔐 Проверка CryptoPro CSP..." -ForegroundColor Gray
         try {
-            if (Test-Path "Cert:\CurrentUser\My") {
-                Write-Host "✅ CryptoPro CSP: Установлен и доступен" -ForegroundColor Green
+            $cspStatus = Test-CryptoProCSP
+            
+            if ($cspStatus.IsInstalled) {
+                Write-Host "✅ CryptoPro CSP: Установлен" -ForegroundColor Green
+                Write-Host "   Метод обнаружения: $($cspStatus.Method)" -ForegroundColor Cyan
+                if ($cspStatus.Version -ne "Не определена") {
+                    Write-Host "   Версия: $($cspStatus.Version)" -ForegroundColor Cyan
+                }
+                if ($cspStatus.Details.Count -gt 0) {
+                    Write-Verbose "Детали: $($cspStatus.Details -join ', ')"
+                }
             } else {
                 Write-Host "❌ CryptoPro CSP: Не найден или не установлен" -ForegroundColor Red
+                Write-Host "   Для работы модуля требуется установка CryptoPro CSP" -ForegroundColor Yellow
+                Write-Host "   Скачать можно с официального сайта: https://cryptopro.ru" -ForegroundColor Gray
             }
         }
         catch {
