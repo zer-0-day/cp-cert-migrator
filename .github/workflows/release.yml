@@ -1,0 +1,63 @@
+name: Create Release with Executable
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install ps2exe
+      shell: pwsh
+      run: |
+        Install-Module -Name ps2exe -Force -Scope CurrentUser
+        
+    - name: Build executable
+      shell: pwsh
+      run: |
+        # Читаем содержимое модуля
+        $moduleContent = Get-Content "CPCertMigrator.psm1" -Raw
+        $launcherContent = Get-Content "launcher.ps1" -Raw
+        
+        # Создаем встроенную версию
+        $embedded = $launcherContent -replace 'if \(Test-Path.*?\}', @"
+# Встроенный модуль
+`$moduleScript = @'
+$moduleContent
+'@
+Invoke-Expression `$moduleScript
+Start-CryptoProCertMigrator
+"@
+        
+        # Сохраняем и компилируем
+        $embedded | Out-File "embedded-launcher.ps1" -Encoding UTF8
+        
+        Import-Module ps2exe
+        Invoke-ps2exe -inputFile "embedded-launcher.ps1" -outputFile "CPCertMigrator.exe" -noConsole:$false
+        
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: CPCertMigrator.exe
+        body: |
+          ## CryptoPro Certificate Migrator ${{ github.ref_name }}
+          
+          ### Скачать
+          - **CPCertMigrator.exe** - Standalone исполняемый файл
+          
+          ### Использование
+          1. Скачайте CPCertMigrator.exe
+          2. Запустите двойным кликом
+          3. Следуйте инструкциям в меню
+          
+          ### Требования
+          - Windows 7+ 
+          - PowerShell 5.1+
+          - CryptoPro CSP
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
