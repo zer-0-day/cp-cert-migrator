@@ -3,7 +3,7 @@
     RootModule        = 'CPCertMigrator.psm1'
 
     # Version number of this module
-    ModuleVersion     = '1.8.2'
+    ModuleVersion     = '1.8.3'
 
     # ID used to uniquely identify this module
     GUID              = 'd4f2c6b2-8e10-4a63-9a8b-2f8cd5109e6a'
