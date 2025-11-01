@@ -2,17 +2,12 @@
 *.ps1xml
 PSGetModuleInfo.xml
 *.nuspec
-
-# Build artifacts
-dist/
-out/
 *.nupkg
 
 # IDE
 .vscode/
 .vs/
 *.swp
-*.swo
 
 # OS
 .DS_Store
@@ -20,7 +15,14 @@ Thumbs.db
 
 # Logs
 *.log
+*Log.csv
 
 # Temporary files
 *.tmp
 *.temp
+
+# Certificate files (for testing)
+*.pfx
+CertExport/
+CertBackup/
+TempMigration*/

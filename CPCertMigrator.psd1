@@ -29,13 +29,13 @@
     # Aliases to export; nones
     AliasesToExport   = @()
 
-    # Private data for module metadata like tags, license, project URI
+    # Private data for module metadata
     PrivateData       = @{
         PSData = @{
-            Tags         = @('CryptoPro', 'CSP', 'Certificate', 'Migration', 'Console')
+            Tags         = @('CryptoPro', 'CSP', 'Certificate', 'Migration')
             LicenseUri   = 'https://opensource.org/licenses/MIT'
-            ProjectUri   = 'https://github.com/YourOrg/CryptoProCertMigrator'
-            ReleaseNotes = 'Version 1.1.0 - Added interactive console menu and enhanced functionality'
+            ProjectUri   = 'https://github.com/zer-0-day/cp-cert-migrator'
+            ReleaseNotes = 'Version 1.8.3 - Interactive menu and enhanced functionality'
         }
     }
 }
