@@ -19,39 +19,69 @@ jobs:
       shell: pwsh
       run: Install-Module -Name ps2exe -Force -Scope CurrentUser
         
-    - name: Create standalone script
+    - name: Create launcher script
       shell: pwsh
       run: |
-        # Читаем модуль и удаляем Export-ModuleMember (не работает в standalone)
-        $moduleContent = Get-Content "CPCertMigrator.psm1" -Raw -Encoding UTF8
-        $moduleContent = $moduleContent -replace 'Export-ModuleMember.*', ''
-        
-        $standaloneScript = @"
+        $launcherScript = @"
         #Requires -Version 5.1
-        # CryptoPro Certificate Migrator Standalone
+        # CryptoPro Certificate Migrator Launcher
         
+        Write-Host "=== CryptoPro Certificate Migrator ===" -ForegroundColor Green
+        Write-Host "Проверка системы..." -ForegroundColor Yellow
+        
+        # Проверка версии PowerShell
         if (`$PSVersionTable.PSVersion.Major -lt 5) {
             Write-Host 'ОШИБКА: Требуется PowerShell 5.1 или выше!' -ForegroundColor Red
+            Write-Host "Текущая версия: `$(`$PSVersionTable.PSVersion)" -ForegroundColor Red
             Read-Host 'Нажмите Enter для выхода'
             exit 1
         }
         
         try {
-        $moduleContent
+            # Проверяем наличие модуля
+            `$module = Get-Module -ListAvailable -Name CPCertMigrator
+            
+            if (-not `$module) {
+                Write-Host "Модуль CPCertMigrator не найден. Устанавливаем..." -ForegroundColor Yellow
+                
+                # Устанавливаем модуль из PowerShell Gallery
+                try {
+                    Install-Module -Name CPCertMigrator -Scope CurrentUser -Force -AllowClobber
+                    Write-Host "Модуль успешно установлен!" -ForegroundColor Green
+                } catch {
+                    Write-Host "Ошибка установки модуля: `$(`$_.Exception.Message)" -ForegroundColor Red
+                    Write-Host "Попробуйте запустить PowerShell от имени администратора" -ForegroundColor Yellow
+                    Read-Host 'Нажмите Enter для выхода'
+                    exit 1
+                }
+            } else {
+                Write-Host "Модуль CPCertMigrator найден (версия: `$(`$module.Version))" -ForegroundColor Green
+            }
+            
+            # Импортируем и запускаем модуль
+            Import-Module CPCertMigrator -Force
+            Write-Host "Запуск CryptoPro Certificate Migrator..." -ForegroundColor Green
+            Write-Host ""
+            
             Start-CryptoProCertMigrator
+            
         } catch {
+            Write-Host ""
             Write-Host "Ошибка: `$(`$_.Exception.Message)" -ForegroundColor Red
+            Write-Host "Стек вызовов:" -ForegroundColor Yellow
+            Write-Host `$_.ScriptStackTrace -ForegroundColor Gray
+            Write-Host ""
             Read-Host 'Нажмите Enter для выхода'
         }
         "@
         
-        $standaloneScript | Out-File "standalone.ps1" -Encoding UTF8
+        `$launcherScript | Out-File "launcher.ps1" -Encoding UTF8
         
     - name: Build executable
       shell: pwsh
       run: |
         Import-Module ps2exe
-        Invoke-ps2exe -inputFile "standalone.ps1" -outputFile "CPCertMigrator.exe" -noConsole:$false
+        Invoke-ps2exe -inputFile "launcher.ps1" -outputFile "CPCertMigrator.exe" -noConsole:$false -requireAdmin
         
     - name: Create Release
       uses: softprops/action-gh-release@v1
@@ -61,16 +91,18 @@ jobs:
           ## CryptoPro Certificate Migrator ${{ github.ref_name }}
           
           ### Скачать
-          - **CPCertMigrator.exe** - Standalone исполняемый файл
+          - **CPCertMigrator.exe** - Launcher с автоустановкой модуля
           
           ### Использование
           1. Скачайте CPCertMigrator.exe
-          2. Запустите двойным кликом
-          3. Следуйте инструкциям в меню
+          2. Запустите двойным кликом (от имени администратора при первом запуске)
+          3. При первом запуске модуль автоматически установится из PowerShell Gallery
+          4. Следуйте инструкциям в меню
           
           ### Требования
           - Windows 7+ 
           - PowerShell 5.1+
           - CryptoPro CSP
+          - Интернет-соединение (для первой установки модуля)
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
