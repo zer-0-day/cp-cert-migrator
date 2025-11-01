@@ -445,7 +445,7 @@ function Import-CryptoProCertificates {
 
     .DESCRIPTION
     Функция импортирует сертификаты из PFX файлов в указанное хранилище (CurrentUser или LocalMachine).
-    Поддерживает валидацию файлов, проверку дубликатов и создает подробные логи операций.
+    Использует прямой метод импорта для максимальной надежности. Поддерживает проверку дубликатов и создает подробные логи операций.
 
     .PARAMETER Scope
     Область хранилища сертификатов: CurrentUser или LocalMachine.
@@ -466,9 +466,6 @@ function Import-CryptoProCertificates {
     .PARAMETER SkipExisting
     Пропускать сертификаты, которые уже существуют в хранилище.
 
-    .PARAMETER SkipValidation
-    Пропустить предварительную проверку PFX файлов. Рекомендуется для решения проблем совместимости.
-
     .EXAMPLE
     Import-CryptoProCertificates -Scope CurrentUser -ImportFolder "C:\CertBackup" -Password "MySecurePassword"
     
@@ -483,11 +480,6 @@ function Import-CryptoProCertificates {
     Import-CryptoProCertificates -Scope CurrentUser -ImportFolder "C:\Backup" -Password "Pass123" -WhatIf
     
     Предварительный просмотр импорта без выполнения операций.
-
-    .EXAMPLE
-    Import-CryptoProCertificates -Scope CurrentUser -ImportFolder "C:\Backup" -Password "Pass123" -SkipValidation
-    
-    Прямой импорт без предварительной проверки файлов (рекомендуется при проблемах с паролями).
 
     .NOTES
     Требует установленный CryptoPro CSP.
@@ -510,10 +502,7 @@ function Import-CryptoProCertificates {
         [switch] $ShowProgress,
 
         [Parameter()]
-        [switch] $SkipExisting,
-
-        [Parameter()]
-        [switch] $SkipValidation
+        [switch] $SkipExisting
     )
 
     # Проверяем права администратора для области LocalMachine
@@ -534,44 +523,9 @@ function Import-CryptoProCertificates {
         return
     }
 
-    # Проверяем файлы только если не пропускаем валидацию
-    if (-not $SkipValidation) {
-        Write-Host "Проверяем PFX файлы..."
-        $validFiles = @()
-        $invalidFiles = @()
-        
-        $pfxFiles | ForEach-Object {
-            Write-Verbose "Проверяем файл: $($_.Name)"
-            if (Test-PfxFile -FilePath $_.FullName -Password $Password) {
-                $validFiles += $_
-                Write-Verbose "✅ Файл корректен: $($_.Name)"
-            }
-            else {
-                $invalidFiles += $_
-                Write-Warning "❌ Неверный PFX файл или неправильный пароль: $($_.Name)"
-            }
-        }
-        
-        # Показываем подробную статистику
-        if ($invalidFiles.Count -gt 0) {
-            Write-Host "⚠️  Проблемные файлы ($($invalidFiles.Count)):" -ForegroundColor Yellow
-            $invalidFiles | ForEach-Object {
-                Write-Host "   - $($_.Name) (размер: $([math]::Round($_.Length / 1KB, 2)) КБ)" -ForegroundColor Red
-            }
-            Write-Host ""
-            Write-Host "Возможные причины:" -ForegroundColor Yellow
-            Write-Host "   • Неправильный пароль" -ForegroundColor Gray
-            Write-Host "   • Поврежденный PFX файл" -ForegroundColor Gray
-            Write-Host "   • Файл создан с другим паролем" -ForegroundColor Gray
-            Write-Host ""
-        }
-
-        Write-Host "Корректных файлов: $($validFiles.Count) из $totalFiles"
-    } else {
-        # В режиме пропуска валидации считаем все файлы корректными
-        Write-Host "⚠️  Валидация пропущена - будем пытаться импортировать все файлы" -ForegroundColor Yellow
-        $validFiles = $pfxFiles
-    }
+    # Используем прямой импорт без предварительной проверки (надежный метод)
+    Write-Host "Будем импортировать все найденные PFX файлы прямым методом" -ForegroundColor Cyan
+    $validFiles = $pfxFiles
 
     if ($WhatIfPreference) {
         Write-Host "Предварительный просмотр: будут импортированы следующие файлы:"
@@ -1045,90 +999,14 @@ function Start-CryptoProCertMigrator {
                         }
                     }
                     
-                    # Предлагаем варианты проверки пароля
+                    # Прямой импорт (надежный метод)
                     Write-Host ""
-                    Write-Host "Варианты импорта:" -ForegroundColor Cyan
-                    Write-Host "1. Прямой импорт без проверки (рекомендуется, работает надежнее)" -ForegroundColor Green
-                    Write-Host "2. С предварительной проверкой пароля" -ForegroundColor Yellow
-                    Write-Host ""
-                    
-                    $validationChoice = Read-Host "Выберите вариант (1/2, по умолчанию 1)"
-                    
-                    if ([string]::IsNullOrWhiteSpace($validationChoice) -or $validationChoice -eq "1") {
-                        # Прямой импорт (по умолчанию)
-                        Write-Host "✅ Выбран прямой импорт (как ручной импорт)" -ForegroundColor Green
-                        $password = Read-Host "Введите пароль для импорта" -AsSecureString
-                        $validPassword = $true
-                        $debugMode = $true
-                    } else {
-                        # Стандартная проверка пароля
-                        $passwordAttempts = 0
-                        $maxAttempts = 3
-                        $validPassword = $false
-                        $debugMode = $false
-                        
-                        do {
-                            $passwordAttempts++
-                            $password = Read-Host "Пароль для PFX файлов (попытка $passwordAttempts из $maxAttempts)" -AsSecureString
-                            
-                            # Проверяем пароль на первом найденном PFX файле
-                            $testFile = Get-ChildItem -Path $folder -Filter "*.pfx" | Select-Object -First 1
-                            if ($testFile) {
-                                Write-Host "Проверяем пароль..." -ForegroundColor Gray
-                                if (Test-PfxFile -FilePath $testFile.FullName -Password $password) {
-                                    Write-Host "✅ Пароль корректен" -ForegroundColor Green
-                                    $validPassword = $true
-                                } else {
-                                    Write-Host "❌ Неверный пароль" -ForegroundColor Red
-                                    if ($passwordAttempts -lt $maxAttempts) {
-                                        Write-Host "Попробуйте еще раз..." -ForegroundColor Yellow
-                                    }
-                                }
-                            } else {
-                                # Если нет PFX файлов, считаем пароль валидным
-                                $validPassword = $true
-                            }
-                        } while (-not $validPassword -and $passwordAttempts -lt $maxAttempts)
-                    }
-                    
-                    if (-not $validPassword) {
-                        Write-Host "❌ Превышено количество попыток ввода пароля" -ForegroundColor Red
-                        Write-Host ""
-                        Write-Host "Варианты решения проблемы:" -ForegroundColor Yellow
-                        Write-Host "1. Попробовать снова с правильным паролем" -ForegroundColor Gray
-                        Write-Host "2. Продолжить импорт без проверки пароля (отладочный режим)" -ForegroundColor Gray
-                        Write-Host "3. Вернуться в главное меню" -ForegroundColor Gray
-                        Write-Host ""
-                        
-                        $debugChoice = Read-Host "Выберите действие (1/2/3)"
-                        
-                        switch ($debugChoice) {
-                            "1" {
-                                # Сбрасываем счетчики и пробуем снова
-                                $passwordAttempts = 0
-                                $validPassword = $false
-                                continue
-                            }
-                            "2" {
-                                # Отладочный режим - пропускаем валидацию
-                                Write-Host "⚠️  ОТЛАДОЧНЫЙ РЕЖИМ: Валидация пароля отключена" -ForegroundColor Yellow
-                                $password = Read-Host "Введите пароль для импорта" -AsSecureString
-                                $validPassword = $true
-                                $debugMode = $true
-                            }
-                            default {
-                                # Возвращаемся в меню
-                                continue
-                            }
-                        }
-                    }
+                    Write-Host "Импорт будет выполнен прямым методом (без предварительной проверки)" -ForegroundColor Cyan
+                    $password = Read-Host "Введите пароль для PFX файлов" -AsSecureString
+
                     
                     try {
-                        if ($debugMode) {
-                            Import-CryptoProCertificates -Scope $scope -ImportFolder $folder -Password $password -ShowProgress -SkipExisting -SkipValidation
-                        } else {
-                            Import-CryptoProCertificates -Scope $scope -ImportFolder $folder -Password $password -ShowProgress -SkipExisting
-                        }
+                        Import-CryptoProCertificates -Scope $scope -ImportFolder $folder -Password $password -ShowProgress -SkipExisting
                         Write-Host "Импорт завершен!" -ForegroundColor Green
                         Read-Host "Нажмите Enter для продолжения"
                     }
