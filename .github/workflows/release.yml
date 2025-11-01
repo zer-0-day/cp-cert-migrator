@@ -22,7 +22,8 @@ jobs:
     - name: Create launcher script
       shell: pwsh
       run: |
-        $launcherScript = @"
+        # Создаем launcher скрипт с проверкой обновлений
+        @'
         #Requires -Version 5.1
         # CryptoPro Certificate Migrator Launcher
         
@@ -30,32 +31,58 @@ jobs:
         Write-Host "Проверка системы..." -ForegroundColor Yellow
         
         # Проверка версии PowerShell
-        if (`$PSVersionTable.PSVersion.Major -lt 5) {
+        if ($PSVersionTable.PSVersion.Major -lt 5) {
             Write-Host 'ОШИБКА: Требуется PowerShell 5.1 или выше!' -ForegroundColor Red
-            Write-Host "Текущая версия: `$(`$PSVersionTable.PSVersion)" -ForegroundColor Red
+            Write-Host "Текущая версия: $($PSVersionTable.PSVersion)" -ForegroundColor Red
             Read-Host 'Нажмите Enter для выхода'
             exit 1
         }
         
         try {
             # Проверяем наличие модуля
-            `$module = Get-Module -ListAvailable -Name CPCertMigrator
+            $localModule = Get-Module -ListAvailable -Name CPCertMigrator | Sort-Object Version -Descending | Select-Object -First 1
             
-            if (-not `$module) {
+            # Проверяем последнюю версию в PowerShell Gallery
+            Write-Host "Проверка обновлений..." -ForegroundColor Yellow
+            try {
+                $onlineModule = Find-Module -Name CPCertMigrator -ErrorAction SilentlyContinue
+            } catch {
+                Write-Host "Не удалось проверить обновления (нет интернета?)" -ForegroundColor Yellow
+                $onlineModule = $null
+            }
+            
+            $needsInstall = $false
+            $needsUpdate = $false
+            
+            if (-not $localModule) {
                 Write-Host "Модуль CPCertMigrator не найден. Устанавливаем..." -ForegroundColor Yellow
-                
-                # Устанавливаем модуль из PowerShell Gallery
+                $needsInstall = $true
+            } elseif ($onlineModule -and ($localModule.Version -lt $onlineModule.Version)) {
+                Write-Host "Найдена новая версия модуля: $($onlineModule.Version) (текущая: $($localModule.Version))" -ForegroundColor Yellow
+                Write-Host "Обновляем модуль..." -ForegroundColor Yellow
+                $needsUpdate = $true
+            } else {
+                Write-Host "Модуль CPCertMigrator найден (версия: $($localModule.Version))" -ForegroundColor Green
+                if ($onlineModule) {
+                    Write-Host "Версия актуальна" -ForegroundColor Green
+                }
+            }
+            
+            # Устанавливаем или обновляем модуль
+            if ($needsInstall -or $needsUpdate) {
                 try {
                     Install-Module -Name CPCertMigrator -Scope CurrentUser -Force -AllowClobber
-                    Write-Host "Модуль успешно установлен!" -ForegroundColor Green
+                    if ($needsInstall) {
+                        Write-Host "Модуль успешно установлен!" -ForegroundColor Green
+                    } else {
+                        Write-Host "Модуль успешно обновлен!" -ForegroundColor Green
+                    }
                 } catch {
-                    Write-Host "Ошибка установки модуля: `$(`$_.Exception.Message)" -ForegroundColor Red
+                    Write-Host "Ошибка установки/обновления модуля: $($_.Exception.Message)" -ForegroundColor Red
                     Write-Host "Попробуйте запустить PowerShell от имени администратора" -ForegroundColor Yellow
                     Read-Host 'Нажмите Enter для выхода'
                     exit 1
                 }
-            } else {
-                Write-Host "Модуль CPCertMigrator найден (версия: `$(`$module.Version))" -ForegroundColor Green
             }
             
             # Импортируем и запускаем модуль
@@ -67,15 +94,13 @@ jobs:
             
         } catch {
             Write-Host ""
-            Write-Host "Ошибка: `$(`$_.Exception.Message)" -ForegroundColor Red
+            Write-Host "Ошибка: $($_.Exception.Message)" -ForegroundColor Red
             Write-Host "Стек вызовов:" -ForegroundColor Yellow
-            Write-Host `$_.ScriptStackTrace -ForegroundColor Gray
+            Write-Host $_.ScriptStackTrace -ForegroundColor Gray
             Write-Host ""
             Read-Host 'Нажмите Enter для выхода'
         }
-        "@
-        
-        `$launcherScript | Out-File "launcher.ps1" -Encoding UTF8
+        '@ | Out-File "launcher.ps1" -Encoding UTF8
         
     - name: Build executable
       shell: pwsh
