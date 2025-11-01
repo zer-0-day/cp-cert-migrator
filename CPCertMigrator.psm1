@@ -32,15 +32,15 @@ function Test-CryptoProCSP {
     
     $result = @{
         IsInstalled = $false
-        Version = "Не определена"
-        Method = "Не найден"
-        Details = @()
+        Version     = "Не определена"
+        Method      = "Не найден"
+        Details     = @()
     }
     
     # Метод 1: Проверка через WMI (CSP провайдеры)
     try {
         $cspProviders = Get-WmiObject -Class Win32_CSPProvider -ErrorAction SilentlyContinue | 
-                       Where-Object { $_.Name -like "*Crypto*Pro*" -or $_.Name -like "*ГОСТ*" }
+        Where-Object { $_.Name -like "*Crypto*Pro*" -or $_.Name -like "*ГОСТ*" }
         if ($cspProviders) {
             $result.IsInstalled = $true
             $result.Method = "WMI CSP провайдеры"
@@ -81,7 +81,7 @@ function Test-CryptoProCSP {
             $gostRegPath = "HKLM:\SOFTWARE\Microsoft\Cryptography\OID\EncodingType 0\CryptSIPDllGetSignedDataMsg"
             if (Test-Path $gostRegPath) {
                 $gostAlgorithms = Get-ChildItem $gostRegPath -ErrorAction SilentlyContinue | 
-                                Where-Object { $_.Name -like "*1.2.643*" }
+                Where-Object { $_.Name -like "*1.2.643*" }
                 if ($gostAlgorithms) {
                     $result.IsInstalled = $true
                     $result.Method = "ГОСТ алгоритмы"
@@ -135,7 +135,8 @@ function Test-PfxFile {
         if ($cert) {
             Write-Verbose "✅ PFX файл корректен. Субъект: $($cert.Subject)"
             return $true
-        } else {
+        }
+        else {
             Write-Verbose "❌ PFX файл не содержит сертификат"
             return $false
         }
@@ -743,95 +744,99 @@ function Start-CryptoProCertMigrator {
     [CmdletBinding()]
     param()
 
-    # Предварительное тестирование системы
+    # Получение статуса системы для отображения в шапке
+    function Get-SystemStatus {
+        $status = @{
+            IsAdmin = Test-AdminRights
+            UserCerts = @{ Count = 0; Error = $null }
+            MachineCerts = @{ Count = 0; Error = $null }
+            CryptoPro = @{ IsInstalled = $false; Version = "Не определена"; Error = $null }
+            ModuleVersion = (Get-Module CPCertMigrator).Version.ToString()
+        }
+        
+        # Проверка CurrentUser
+        try {
+            $userCerts = Get-CryptoProCertificates -Scope CurrentUser -ErrorAction Stop
+            $status.UserCerts.Count = $userCerts.Count
+        }
+        catch {
+            $status.UserCerts.Error = $_.Exception.Message
+        }
+        
+        # Проверка LocalMachine (если есть права)
+        if ($status.IsAdmin) {
+            try {
+                $machineCerts = Get-CryptoProCertificates -Scope LocalMachine -ErrorAction Stop
+                $status.MachineCerts.Count = $machineCerts.Count
+            }
+            catch {
+                $status.MachineCerts.Error = $_.Exception.Message
+            }
+        }
+        
+        # Проверка CryptoPro CSP
+        try {
+            $cspStatus = Test-CryptoProCSP
+            $status.CryptoPro.IsInstalled = $cspStatus.IsInstalled
+            $status.CryptoPro.Version = $cspStatus.Version
+        }
+        catch {
+            $status.CryptoPro.Error = $_.Exception.Message
+        }
+        
+        return $status
+    }
+
+    # Предварительное тестирование системы (подробный вывод)
     function Test-SystemStatus {
         Write-Host "=== ПРОВЕРКА СИСТЕМЫ ===" -ForegroundColor Cyan
         Write-Host ""
         
+        $status = Get-SystemStatus
+        
         # Проверка прав администратора
-        $isAdmin = Test-AdminRights
-        if ($isAdmin) {
-            Write-Host "✅ Права администратора: Есть" -ForegroundColor Green
-        } else {
-            Write-Host "⚠️  Права администратора: Нет (ограниченный функционал)" -ForegroundColor Yellow
+        if ($status.IsAdmin) {
+            Write-Host "Права администратора: Есть" -ForegroundColor Green
+        }
+        else {
+            Write-Host "Права администратора: Нет (ограниченный функционал)" -ForegroundColor Yellow
         }
         
-        # Проверка доступности хранилища CurrentUser
-        Write-Host "📁 Проверка хранилища CurrentUser..." -ForegroundColor Gray
-        try {
-            $userCerts = Get-CryptoProCertificates -Scope CurrentUser -ErrorAction Stop
-            Write-Host "✅ CurrentUser: найдено $($userCerts.Count) сертификатов" -ForegroundColor Green
-            
-            if ($userCerts.Count -gt 0) {
-                $expiringSoon = $userCerts | Where-Object { $_."Дней_осталось" -lt 30 }
-                $expired = $userCerts | Where-Object { $_."Дней_осталось" -lt 0 }
-                
-                if ($expired.Count -gt 0) {
-                    Write-Host "   ❌ Истекших: $($expired.Count)" -ForegroundColor Red
-                }
-                if ($expiringSoon.Count -gt 0) {
-                    Write-Host "   ⚠️  Истекают скоро (< 30 дней): $($expiringSoon.Count)" -ForegroundColor Yellow
-                }
-                
-                $withPrivateKey = $userCerts | Where-Object { $_."Есть_закрытый_ключ" -eq $true }
-                Write-Host "   🔑 С закрытым ключом: $($withPrivateKey.Count)" -ForegroundColor Cyan
-            }
+        # Проверка CurrentUser
+        Write-Host "Проверка хранилища CurrentUser..." -ForegroundColor Gray
+        if ($status.UserCerts.Error) {
+            Write-Host "CurrentUser: Ошибка доступа - $($status.UserCerts.Error)" -ForegroundColor Red
         }
-        catch {
-            Write-Host "❌ CurrentUser: Ошибка доступа - $($_.Exception.Message)" -ForegroundColor Red
+        else {
+            Write-Host "CurrentUser: найдено $($status.UserCerts.Count) сертификатов" -ForegroundColor Green
         }
         
-        # Проверка доступности хранилища LocalMachine
-        Write-Host "📁 Проверка хранилища LocalMachine..." -ForegroundColor Gray
-        if ($isAdmin) {
-            try {
-                $machineCerts = Get-CryptoProCertificates -Scope LocalMachine -ErrorAction Stop
-                Write-Host "✅ LocalMachine: найдено $($machineCerts.Count) сертификатов" -ForegroundColor Green
-                
-                if ($machineCerts.Count -gt 0) {
-                    $expiringSoon = $machineCerts | Where-Object { $_."Дней_осталось" -lt 30 }
-                    $expired = $machineCerts | Where-Object { $_."Дней_осталось" -lt 0 }
-                    
-                    if ($expired.Count -gt 0) {
-                        Write-Host "   ❌ Истекших: $($expired.Count)" -ForegroundColor Red
-                    }
-                    if ($expiringSoon.Count -gt 0) {
-                        Write-Host "   ⚠️  Истекают скоро (< 30 дней): $($expiringSoon.Count)" -ForegroundColor Yellow
-                    }
-                    
-                    $withPrivateKey = $machineCerts | Where-Object { $_."Есть_закрытый_ключ" -eq $true }
-                    Write-Host "   🔑 С закрытым ключом: $($withPrivateKey.Count)" -ForegroundColor Cyan
-                }
-            }
-            catch {
-                Write-Host "❌ LocalMachine: Ошибка доступа - $($_.Exception.Message)" -ForegroundColor Red
-            }
-        } else {
-            Write-Host "⚠️  LocalMachine: Недоступно (нужны права администратора)" -ForegroundColor Yellow
+        # Проверка LocalMachine
+        Write-Host "Проверка хранилища LocalMachine..." -ForegroundColor Gray
+        if (-not $status.IsAdmin) {
+            Write-Host "LocalMachine: Недоступно (нужны права администратора)" -ForegroundColor Yellow
+        }
+        elseif ($status.MachineCerts.Error) {
+            Write-Host "LocalMachine: Ошибка доступа - $($status.MachineCerts.Error)" -ForegroundColor Red
+        }
+        else {
+            Write-Host "LocalMachine: найдено $($status.MachineCerts.Count) сертификатов" -ForegroundColor Green
         }
         
         # Проверка CryptoPro CSP
-        Write-Host "🔐 Проверка CryptoPro CSP..." -ForegroundColor Gray
-        try {
-            $cspStatus = Test-CryptoProCSP
-            
-            if ($cspStatus.IsInstalled) {
-                Write-Host "✅ CryptoPro CSP: Установлен" -ForegroundColor Green
-                Write-Host "   Метод обнаружения: $($cspStatus.Method)" -ForegroundColor Cyan
-                if ($cspStatus.Version -ne "Не определена") {
-                    Write-Host "   Версия: $($cspStatus.Version)" -ForegroundColor Cyan
-                }
-                if ($cspStatus.Details.Count -gt 0) {
-                    Write-Verbose "Детали: $($cspStatus.Details -join ', ')"
-                }
-            } else {
-                Write-Host "❌ CryptoPro CSP: Не найден или не установлен" -ForegroundColor Red
-                Write-Host "   Для работы модуля требуется установка CryptoPro CSP" -ForegroundColor Yellow
-                Write-Host "   Скачать можно с официального сайта: https://cryptopro.ru" -ForegroundColor Gray
+        Write-Host "Проверка CryptoPro CSP..." -ForegroundColor Gray
+        if ($status.CryptoPro.Error) {
+            Write-Host "CryptoPro CSP: Ошибка проверки - $($status.CryptoPro.Error)" -ForegroundColor Red
+        }
+        elseif ($status.CryptoPro.IsInstalled) {
+            Write-Host "CryptoPro CSP: Установлен" -ForegroundColor Green
+            if ($status.CryptoPro.Version -ne "Не определена") {
+                Write-Host "Версия: $($status.CryptoPro.Version)" -ForegroundColor Cyan
             }
         }
-        catch {
-            Write-Host "❌ CryptoPro CSP: Ошибка проверки - $($_.Exception.Message)" -ForegroundColor Red
+        else {
+            Write-Host "CryptoPro CSP: Не найден или не установлен" -ForegroundColor Red
+            Write-Host "Для работы модуля требуется установка CryptoPro CSP" -ForegroundColor Yellow
         }
         
         Write-Host ""
@@ -844,28 +849,44 @@ function Start-CryptoProCertMigrator {
 
     do {
         Clear-Host
-        Write-Host "=== CryptoPro Certificate Migrator ===" -ForegroundColor Cyan
+        
+        # Получаем статус системы
+        $systemStatus = Get-SystemStatus
+        
+        # Шапка с информацией о системе
+        Write-Host "=== CryptoPro Certificate Migrator v$($systemStatus.ModuleVersion) ===" -ForegroundColor Cyan
         Write-Host ""
         
-        # Показываем краткий статус
-        $isAdmin = Test-AdminRights
-        $adminStatus = if ($isAdmin) { "Администратор" } else { "Пользователь" }
-        Write-Host "Статус: $adminStatus" -ForegroundColor $(if ($isAdmin) { "Green" } else { "Yellow" })
-        
-        try {
-            $userCount = (Get-CryptoProCertificates -Scope CurrentUser -ErrorAction SilentlyContinue).Count
-            Write-Host "CurrentUser: $userCount сертификатов" -ForegroundColor Cyan
-        } catch {
-            Write-Host "CurrentUser: недоступно" -ForegroundColor Red
+        # Статус администратора
+        if ($systemStatus.IsAdmin) {
+            Write-Host "Статус: Администратор" -ForegroundColor Green
+        } else {
+            Write-Host "Статус: Пользователь" -ForegroundColor Yellow
         }
         
-        if ($isAdmin) {
-            try {
-                $machineCount = (Get-CryptoProCertificates -Scope LocalMachine -ErrorAction SilentlyContinue).Count
-                Write-Host "LocalMachine: $machineCount сертификатов" -ForegroundColor Cyan
-            } catch {
-                Write-Host "LocalMachine: недоступно" -ForegroundColor Red
-            }
+        # CurrentUser сертификаты
+        if ($systemStatus.UserCerts.Error) {
+            Write-Host "CurrentUser: недоступно" -ForegroundColor Red
+        } else {
+            Write-Host "CurrentUser: $($systemStatus.UserCerts.Count) сертификатов" -ForegroundColor Green
+        }
+        
+        # LocalMachine сертификаты
+        if (-not $systemStatus.IsAdmin) {
+            Write-Host "LocalMachine: недоступно (нужны права администратора)" -ForegroundColor Yellow
+        } elseif ($systemStatus.MachineCerts.Error) {
+            Write-Host "LocalMachine: недоступно" -ForegroundColor Red
+        } else {
+            Write-Host "LocalMachine: $($systemStatus.MachineCerts.Count) сертификатов" -ForegroundColor Green
+        }
+        
+        # CryptoPro CSP статус
+        if ($systemStatus.CryptoPro.Error) {
+            Write-Host "CryptoPro CSP: ошибка проверки" -ForegroundColor Red
+        } elseif ($systemStatus.CryptoPro.IsInstalled) {
+            Write-Host "CryptoPro CSP: установлен" -ForegroundColor Green
+        } else {
+            Write-Host "CryptoPro CSP: не установлен" -ForegroundColor Red
         }
         
         Write-Host ""
@@ -941,7 +962,8 @@ function Start-CryptoProCertMigrator {
                             Read-Host "Нажмите Enter для продолжения"
                             continue
                         }
-                    } else {
+                    }
+                    else {
                         Write-Host "✅ Папка существует: $folder" -ForegroundColor Green
                     }
                     
@@ -986,7 +1008,8 @@ function Start-CryptoProCertMigrator {
                         Write-Host "Создайте папку или укажите существующую папку с PFX файлами" -ForegroundColor Yellow
                         Read-Host "Нажмите Enter для продолжения"
                         continue
-                    } else {
+                    }
+                    else {
                         $pfxCount = (Get-ChildItem -Path $folder -Filter "*.pfx" -ErrorAction SilentlyContinue).Count
                         if ($pfxCount -eq 0) {
                             Write-Host "⚠️  В папке нет PFX файлов: $folder" -ForegroundColor Yellow
@@ -994,7 +1017,8 @@ function Start-CryptoProCertMigrator {
                             if ($confirm -ne 'y' -and $confirm -ne 'Y') {
                                 continue
                             }
-                        } else {
+                        }
+                        else {
                             Write-Host "✅ Найдено PFX файлов: $pfxCount в папке $folder" -ForegroundColor Green
                         }
                     }
