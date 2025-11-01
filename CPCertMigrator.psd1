@@ -3,7 +3,7 @@
     RootModule        = 'CPCertMigrator.psm1'
 
     # Version number of this module
-    ModuleVersion     = '1.8.3'
+    ModuleVersion     = '1.9.2'
 
     # ID used to uniquely identify this module
     GUID              = 'd4f2c6b2-8e10-4a63-9a8b-2f8cd5109e6a'
@@ -35,7 +35,7 @@
             Tags         = @('CryptoPro', 'CSP', 'Certificate', 'Migration')
             LicenseUri   = 'https://opensource.org/licenses/MIT'
             ProjectUri   = 'https://github.com/zer-0-day/cp-cert-migrator'
-            ReleaseNotes = 'Version 1.8.3 - Interactive menu and enhanced functionality'
+            ReleaseNotes = 'Version 1.9.2 - Simplified project structure, improved documentation and smart launcher'
         }
     }
 }
