@@ -747,10 +747,10 @@ function Start-CryptoProCertMigrator {
     # Получение статуса системы для отображения в шапке
     function Get-SystemStatus {
         $status = @{
-            IsAdmin = Test-AdminRights
-            UserCerts = @{ Count = 0; Error = $null }
-            MachineCerts = @{ Count = 0; Error = $null }
-            CryptoPro = @{ IsInstalled = $false; Version = "Не определена"; Error = $null }
+            IsAdmin       = Test-AdminRights
+            UserCerts     = @{ Count = 0; Error = $null }
+            MachineCerts  = @{ Count = 0; Error = $null }
+            CryptoPro     = @{ IsInstalled = $false; Version = "Не определена"; Error = $null }
             ModuleVersion = (Get-Module CPCertMigrator).Version.ToString()
         }
         
@@ -840,13 +840,8 @@ function Start-CryptoProCertMigrator {
         }
         
         Write-Host ""
-        Write-Host "Нажмите любую клавишу для продолжения..." -ForegroundColor Gray
-        $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     }
     
-    # Запускаем предварительное тестирование
-    Test-SystemStatus
-
     do {
         Clear-Host
         
@@ -860,32 +855,38 @@ function Start-CryptoProCertMigrator {
         # Статус администратора
         if ($systemStatus.IsAdmin) {
             Write-Host "Статус: Администратор" -ForegroundColor Green
-        } else {
+        }
+        else {
             Write-Host "Статус: Пользователь" -ForegroundColor Yellow
         }
         
         # CurrentUser сертификаты
         if ($systemStatus.UserCerts.Error) {
             Write-Host "CurrentUser: недоступно" -ForegroundColor Red
-        } else {
+        }
+        else {
             Write-Host "CurrentUser: $($systemStatus.UserCerts.Count) сертификатов" -ForegroundColor Green
         }
         
         # LocalMachine сертификаты
         if (-not $systemStatus.IsAdmin) {
             Write-Host "LocalMachine: недоступно (нужны права администратора)" -ForegroundColor Yellow
-        } elseif ($systemStatus.MachineCerts.Error) {
+        }
+        elseif ($systemStatus.MachineCerts.Error) {
             Write-Host "LocalMachine: недоступно" -ForegroundColor Red
-        } else {
+        }
+        else {
             Write-Host "LocalMachine: $($systemStatus.MachineCerts.Count) сертификатов" -ForegroundColor Green
         }
         
         # CryptoPro CSP статус
         if ($systemStatus.CryptoPro.Error) {
             Write-Host "CryptoPro CSP: ошибка проверки" -ForegroundColor Red
-        } elseif ($systemStatus.CryptoPro.IsInstalled) {
+        }
+        elseif ($systemStatus.CryptoPro.IsInstalled) {
             Write-Host "CryptoPro CSP: установлен" -ForegroundColor Green
-        } else {
+        }
+        else {
             Write-Host "CryptoPro CSP: не установлен" -ForegroundColor Red
         }
         
