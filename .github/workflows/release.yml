@@ -106,7 +106,7 @@ jobs:
       shell: pwsh
       run: |
         Import-Module ps2exe
-        Invoke-ps2exe -inputFile "launcher.ps1" -outputFile "CPCertMigrator.exe" -noConsole:$false -requireAdmin
+        Invoke-ps2exe -inputFile "launcher.ps1" -outputFile "CPCertMigrator.exe" -noConsole:$false
         
     - name: Create Release
       uses: softprops/action-gh-release@v1
@@ -125,7 +125,7 @@ jobs:
           4. Следуйте инструкциям в меню
           
           ### Требования
-          - Windows 7+ 
+          - Windows 10+ 
           - PowerShell 5.1+
           - CryptoPro CSP
           - Интернет-соединение (для первой установки модуля)
