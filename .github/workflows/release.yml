@@ -22,8 +22,9 @@ jobs:
     - name: Create standalone script
       shell: pwsh
       run: |
-        # Создаем standalone скрипт
+        # Читаем модуль и удаляем Export-ModuleMember (не работает в standalone)
         $moduleContent = Get-Content "CPCertMigrator.psm1" -Raw -Encoding UTF8
+        $moduleContent = $moduleContent -replace 'Export-ModuleMember.*', ''
         
         $standaloneScript = @"
         #Requires -Version 5.1
