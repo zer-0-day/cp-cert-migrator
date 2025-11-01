@@ -23,21 +23,45 @@ jobs:
     - name: Build executable
       shell: pwsh
       run: |
-        Write-Host "Reading module content..."
-        $moduleContent = Get-Content "CPCertMigrator.psm1" -Raw
-        $launcherContent = Get-Content "launcher.ps1" -Raw
+        Write-Host "Reading files..."
+        $moduleContent = Get-Content "CPCertMigrator.psm1" -Raw -Encoding UTF8
         
-        Write-Host "Creating embedded launcher..."
-        $replacePattern = 'if \(Test-Path.*?\}'
-        $replacement = 'Invoke-Expression @"' + "`n" + $moduleContent + "`n" + '"@' + "`n" + 'Start-CryptoProCertMigrator'
-        $embedded = $launcherContent -replace $replacePattern, $replacement
+        Write-Host "Creating standalone launcher..."
+        $standaloneScript = @"
+#Requires -Version 5.1
+# CryptoPro Certificate Migrator Standalone v1.8.2
+
+param([switch]`$Version)
+
+if (`$Version) {
+    Write-Host "CryptoPro Certificate Migrator v1.8.2"
+    exit 0
+}
+
+if (`$PSVersionTable.PSVersion.Major -lt 5) {
+    Write-Host "ОШИБКА: Требуется PowerShell 5.1 или выше!" -ForegroundColor Red
+    Read-Host "Нажмите Enter для выхода"
+    exit 1
+}
+
+try {
+    # Встроенный модуль CPCertMigrator
+    $moduleContent
+    
+    # Запуск интерактивного меню
+    Start-CryptoProCertMigrator
+} catch {
+    Write-Host "Ошибка: `$(`$_.Exception.Message)" -ForegroundColor Red
+    Read-Host "Нажмите Enter для выхода"
+}
+"@
         
-        Write-Host "Saving embedded launcher..."
-        $embedded | Out-File "embedded-launcher.ps1" -Encoding UTF8
+        Write-Host "Saving standalone script..."
+        $standaloneScript | Out-File "standalone.ps1" -Encoding UTF8
         
         Write-Host "Compiling to exe..."
         Import-Module ps2exe
-        Invoke-ps2exe -inputFile "embedded-launcher.ps1" -outputFile "CPCertMigrator.exe" -noConsole:$false
+        Invoke-ps2exe -inputFile "standalone.ps1" -outputFile "CPCertMigrator.exe" -noConsole:$false
         
     - name: Create Release
       uses: softprops/action-gh-release@v1
