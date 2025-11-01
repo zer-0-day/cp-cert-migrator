@@ -20,23 +20,19 @@ jobs:
     - name: Build executable
       shell: pwsh
       run: |
-        # Читаем содержимое модуля
+        Write-Host "Reading module content..."
         $moduleContent = Get-Content "CPCertMigrator.psm1" -Raw
         $launcherContent = Get-Content "launcher.ps1" -Raw
         
-        # Создаем встроенную версию
-        $embedded = $launcherContent -replace 'if \(Test-Path.*?\}', @"
-# Встроенный модуль
-`$moduleScript = @'
-$moduleContent
-'@
-Invoke-Expression `$moduleScript
-Start-CryptoProCertMigrator
-"@
+        Write-Host "Creating embedded launcher..."
+        $replacePattern = 'if \(Test-Path.*?\}'
+        $replacement = 'Invoke-Expression @"' + "`n" + $moduleContent + "`n" + '"@' + "`n" + 'Start-CryptoProCertMigrator'
+        $embedded = $launcherContent -replace $replacePattern, $replacement
         
-        # Сохраняем и компилируем
+        Write-Host "Saving embedded launcher..."
         $embedded | Out-File "embedded-launcher.ps1" -Encoding UTF8
         
+        Write-Host "Compiling to exe..."
         Import-Module ps2exe
         Invoke-ps2exe -inputFile "embedded-launcher.ps1" -outputFile "CPCertMigrator.exe" -noConsole:$false
         
